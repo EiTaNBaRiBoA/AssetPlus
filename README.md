@@ -39,7 +39,7 @@ Similar to Unity's package import, you get full control when installing template
 - Optionally import input actions and autoloads
 - Preview what will be added to your project
 
-![Smart Installation](screens/installfiletreescreenshot.png)
+<img src="screens/installfiletreescreenshot.png" width="500">
 
 ### Auto-Update
 AssetPlus checks for updates at startup and notifies you when a new version is available. Install updates with one click, or disable auto-update in Settings.
