@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="addons/assetplus/icon.png" width="128">
+  <img src="screens/banner.png" alt="AssetPlus">
 </p>
-
-<h1 align="center">AssetPlus</h1>
 
 <p align="center">
   <a href="https://godotengine.org/"><img src="https://img.shields.io/badge/Godot-4.3%2B-blue?logo=godot-engine&logoColor=white" alt="Godot 4.3+"></a>
