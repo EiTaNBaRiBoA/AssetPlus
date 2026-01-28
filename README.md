@@ -33,10 +33,13 @@ Build your personal asset collection:
 - Right-click export from FileSystem dock
 
 ### Smart Installation
-When installing templates or demo projects:
-- Choose which files/folders to import
+Similar to Unity's package import, you get full control when installing templates or demo projects:
+- Choose which files/folders to import with a file tree view
+- Filter by file type (Scripts, Scenes, Images, etc.)
 - Optionally import input actions and autoloads
 - Preview what will be added to your project
+
+![Smart Installation](screens/installfiletreescreenshot.png)
 
 ### Auto-Update
 AssetPlus checks for updates at startup and notifies you when a new version is available. Install updates with one click, or disable auto-update in Settings.
