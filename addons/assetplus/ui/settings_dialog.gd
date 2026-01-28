@@ -44,6 +44,7 @@ var _debug_option: OptionButton
 var _store_checkboxes: Dictionary = {}
 var _version_label: Label
 var _check_updates_btn: Button
+var _auto_update_checkbox: CheckBox
 var _update_checker: RefCounted
 
 
@@ -215,6 +216,16 @@ func _build_ui() -> void:
 	_check_updates_btn.pressed.connect(_on_check_updates)
 	version_hbox.add_child(_check_updates_btn)
 
+	# Auto-update checkbox
+	var auto_update_hbox = HBoxContainer.new()
+	auto_update_hbox.add_theme_constant_override("separation", 10)
+	version_section.add_child(auto_update_hbox)
+
+	_auto_update_checkbox = CheckBox.new()
+	_auto_update_checkbox.text = "Check for updates at startup"
+	_auto_update_checkbox.button_pressed = not _settings.get("auto_update_disabled", false)
+	auto_update_hbox.add_child(_auto_update_checkbox)
+
 	# Spacer
 	var spacer = Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -300,6 +311,7 @@ func _on_save() -> void:
 	_settings["default_export_path"] = _export_path_edit.text.strip_edges()
 	_settings["global_asset_folder"] = _global_folder_edit.text.strip_edges()
 	_settings["debug_level"] = _debug_option.get_selected_id()
+	_settings["auto_update_disabled"] = not _auto_update_checkbox.button_pressed
 
 	var enabled_stores: Dictionary = {}
 	for store_id in _store_checkboxes:

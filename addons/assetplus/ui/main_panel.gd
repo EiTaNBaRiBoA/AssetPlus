@@ -107,6 +107,7 @@ var _cards: Array = []
 var _linkup_cache: Dictionary = {}  # folder_name -> {matched: bool, asset_id: String, source: String, info: Dictionary}
 var _linkup_pending: Dictionary = {}  # folder_name -> true (for ongoing searches)
 var _session_installed_paths: Array[String] = []  # Paths installed during this session (may crash if deleted)
+var _update_checker: RefCounted  # Keep reference to prevent garbage collection
 
 # Filters for Installed/Favorites tabs
 var _filter_selected_category: String = "All"
@@ -327,19 +328,18 @@ func _check_first_launch() -> void:
 
 
 func _check_for_updates() -> void:
-	var checker = UpdateChecker.new()
-	checker.update_available.connect(_on_update_available)
-	checker.check_for_updates(self)
+	# Check if user has disabled auto-update
+	var settings = SettingsDialog.get_settings()
+	if settings.get("auto_update_disabled", false):
+		SettingsDialog.debug_print("Auto-update check disabled by user")
+		return
+
+	_update_checker = UpdateChecker.new()
+	_update_checker.update_available.connect(_on_update_available)
+	_update_checker.check_for_updates(self)
 
 
 func _on_update_available(current_version: String, new_version: String, browse_url: String, download_url: String, release_notes: String = "") -> void:
-	# Check if user has skipped this version
-	var settings = SettingsDialog.get_settings()
-	var skipped_version = settings.get("skipped_update_version", "")
-	if skipped_version == new_version:
-		SettingsDialog.debug_print("Update %s was skipped by user" % new_version)
-		return
-
 	# Show update dialog
 	var dialog = UpdateDialog.new()
 	dialog.setup(current_version, new_version, browse_url, download_url, release_notes)

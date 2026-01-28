@@ -13,15 +13,12 @@ var _download_url: String
 var _release_notes: String
 
 var _install_btn: Button
-var _download_btn: Button
 var _progress_label: Label
 var _installer: RefCounted
 
 
 func _init() -> void:
 	title = "AssetPlus Update Available"
-	min_size = Vector2i(400, 0)
-	max_size = Vector2i(500, 300)
 	ok_button_text = "Later"
 
 
@@ -35,6 +32,16 @@ func setup(current_version: String, new_version: String, browse_url: String, dow
 
 func _ready() -> void:
 	_build_ui()
+	# Let the dialog size itself based on content
+	call_deferred("_adjust_size")
+
+
+func _adjust_size() -> void:
+	# Reset size to let it auto-fit content
+	reset_size()
+	# Center on screen
+	var screen_size = DisplayServer.screen_get_size()
+	position = (screen_size - size) / 2
 
 
 func _build_ui() -> void:
@@ -100,36 +107,27 @@ func _build_ui() -> void:
 
 	_install_btn = Button.new()
 	_install_btn.text = "Install Now"
-	_install_btn.custom_minimum_size.x = 120
+	_install_btn.custom_minimum_size.x = 100
+	var theme = EditorInterface.get_editor_theme()
 	if theme:
 		_install_btn.icon = theme.get_icon("Progress1", "EditorIcons")
 	_install_btn.pressed.connect(_on_install_pressed)
 	btn_hbox.add_child(_install_btn)
 
-	_download_btn = Button.new()
-	_download_btn.text = "View on Asset Library"
-	_download_btn.custom_minimum_size.x = 150
-	if theme:
-		_download_btn.icon = theme.get_icon("AssetLib", "EditorIcons")
-	_download_btn.pressed.connect(_on_download_pressed)
-	btn_hbox.add_child(_download_btn)
-
-	var skip_btn = Button.new()
-	skip_btn.text = "Skip"
-	skip_btn.custom_minimum_size.x = 80
-	skip_btn.pressed.connect(_on_skip_pressed)
-	btn_hbox.add_child(skip_btn)
+	var disable_btn = Button.new()
+	disable_btn.text = "Disable Auto-Update"
+	disable_btn.custom_minimum_size.x = 120
+	disable_btn.pressed.connect(_on_disable_auto_update_pressed)
+	btn_hbox.add_child(disable_btn)
 
 
 func _on_install_pressed() -> void:
 	if _download_url.is_empty():
 		SettingsDialog.debug_print("No download URL available for auto-install")
-		_on_download_pressed()
 		return
 
 	# Disable buttons during install
 	_install_btn.disabled = true
-	_download_btn.disabled = true
 	get_ok_button().disabled = true
 	_progress_label.visible = true
 	_progress_label.text = "Starting update..."
@@ -151,7 +149,6 @@ func _on_install_completed(success: bool, error_message: String) -> void:
 	if not success:
 		# Re-enable buttons on failure
 		_install_btn.disabled = false
-		_download_btn.disabled = false
 		get_ok_button().disabled = false
 		_progress_label.text = "Update failed: " + error_message
 		_progress_label.add_theme_color_override("font_color", Color(1.0, 0.4, 0.4))
@@ -166,27 +163,27 @@ func _on_install_completed(success: bool, error_message: String) -> void:
 	# If success, the editor will restart automatically
 
 
-func _on_download_pressed() -> void:
-	SettingsDialog.debug_print("Opening Asset Library page: %s" % _browse_url)
-	OS.shell_open(_browse_url)
+func _on_disable_auto_update_pressed() -> void:
+	# Show confirmation dialog
+	var confirm_dialog = ConfirmationDialog.new()
+	confirm_dialog.title = "Disable Auto-Update"
+	confirm_dialog.dialog_text = "Are you sure you want to disable automatic update checks at AssetPlus startup?\n\nYou can still check for updates manually from Settings."
+	confirm_dialog.ok_button_text = "Disable"
+	confirm_dialog.cancel_button_text = "Cancel"
 
-	# Show reminder about restarting
-	var reminder = AcceptDialog.new()
-	reminder.title = "Reminder"
-	reminder.dialog_text = "After installing the update through the Asset Library,\nplease restart Godot to apply the changes."
-	reminder.ok_button_text = "Got it!"
-	EditorInterface.get_base_control().add_child(reminder)
-	reminder.confirmed.connect(func(): reminder.queue_free())
-	reminder.canceled.connect(func(): reminder.queue_free())
-	reminder.popup_centered()
+	confirm_dialog.confirmed.connect(func():
+		# Save the setting to disable auto-update
+		var settings = SettingsDialog.get_settings()
+		settings["auto_update_disabled"] = true
+		SettingsDialog.save_settings(settings)
+		SettingsDialog.debug_print("Auto-update disabled by user")
+		confirm_dialog.queue_free()
+		hide()
+	)
 
-	hide()
+	confirm_dialog.canceled.connect(func():
+		confirm_dialog.queue_free()
+	)
 
-
-func _on_skip_pressed() -> void:
-	# Save the skipped version to settings so we don't prompt again
-	var settings = SettingsDialog.get_settings()
-	settings["skipped_update_version"] = _new_version
-	SettingsDialog.save_settings(settings)
-	SettingsDialog.debug_print("Skipped update version: %s" % _new_version)
-	hide()
+	EditorInterface.get_base_control().add_child(confirm_dialog)
+	confirm_dialog.popup_centered()
