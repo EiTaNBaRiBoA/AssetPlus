@@ -5,6 +5,7 @@ extends AcceptDialog
 
 const GLOBAL_APP_FOLDER = "GodotAssetPlus"
 const CONFIG_FILE = "settings.cfg"
+const UpdateChecker = preload("res://addons/assetplus/ui/update_checker.gd")
 
 
 static func _get_global_config_path() -> String:
@@ -41,6 +42,9 @@ var _global_folder_edit: LineEdit
 var _global_folder_btn: Button
 var _debug_option: OptionButton
 var _store_checkboxes: Dictionary = {}
+var _version_label: Label
+var _check_updates_btn: Button
+var _update_checker: RefCounted
 
 
 func _init() -> void:
@@ -192,6 +196,25 @@ func _build_ui() -> void:
 
 		_store_checkboxes[store_id] = checkbox
 
+	main_vbox.add_child(HSeparator.new())
+
+	# Version and Updates section
+	var version_section = _create_section("About")
+	main_vbox.add_child(version_section)
+
+	var version_hbox = HBoxContainer.new()
+	version_hbox.add_theme_constant_override("separation", 15)
+	version_section.add_child(version_hbox)
+
+	_version_label = Label.new()
+	_version_label.text = "AssetPlus v%s" % _get_plugin_version()
+	version_hbox.add_child(_version_label)
+
+	_check_updates_btn = Button.new()
+	_check_updates_btn.text = "Check for Updates"
+	_check_updates_btn.pressed.connect(_on_check_updates)
+	version_hbox.add_child(_check_updates_btn)
+
 	# Spacer
 	var spacer = Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -320,6 +343,48 @@ func _on_open_config_folder() -> void:
 	var config_path = _get_global_config_path()
 	var folder_path = config_path.get_base_dir()
 	OS.shell_open(folder_path)
+
+
+func _get_plugin_version() -> String:
+	var config = ConfigFile.new()
+	var err = config.load("res://addons/assetplus/plugin.cfg")
+	if err != OK:
+		return "?"
+	return config.get_value("plugin", "version", "?")
+
+
+func _on_check_updates() -> void:
+	_check_updates_btn.disabled = true
+	_check_updates_btn.text = "Checking..."
+
+	_update_checker = UpdateChecker.new()
+	_update_checker.update_available.connect(_on_update_available)
+	_update_checker.check_complete.connect(_on_check_complete)
+	_update_checker.check_for_updates(self)
+
+
+func _on_update_available(current_version: String, new_version: String, browse_url: String, download_url: String) -> void:
+	# Show update dialog
+	var UpdateDialog = load("res://addons/assetplus/ui/update_dialog.gd")
+	var dialog = UpdateDialog.new()
+	dialog.setup(current_version, new_version, browse_url, download_url)
+	EditorInterface.get_base_control().add_child(dialog)
+	dialog.popup_centered()
+
+
+func _on_check_complete(has_update: bool) -> void:
+	_check_updates_btn.disabled = false
+	_check_updates_btn.text = "Check for Updates"
+
+	if not has_update:
+		# Show brief message that we're up to date
+		var dialog = AcceptDialog.new()
+		dialog.title = "Up to Date"
+		dialog.dialog_text = "AssetPlus is up to date!"
+		dialog.confirmed.connect(func(): dialog.queue_free())
+		dialog.canceled.connect(func(): dialog.queue_free())
+		EditorInterface.get_base_control().add_child(dialog)
+		dialog.popup_centered()
 
 
 ## Static method to get current settings
