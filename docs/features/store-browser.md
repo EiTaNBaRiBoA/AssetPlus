@@ -2,6 +2,8 @@
 
 The Store Browser lets you search and browse assets from multiple sources in one unified interface.
 
+![Store Browser](../images/storescreenshot.png)
+
 ## Available Sources
 
 ### Godot Asset Library
@@ -62,11 +64,12 @@ Click on any card to view full details.
 The detail view shows:
 
 - Full description
-- Screenshots (if available)
 - Version information
 - Download size
 - Installation button
 - Favorite button
+
+![Asset Details](../images/detailedviewscreenshot.png)
 
 ## Disabling Sources
 

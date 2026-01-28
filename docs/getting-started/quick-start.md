@@ -18,6 +18,17 @@ This guide will help you get started with AssetPlus in just a few minutes.
 4. Choose the installation location (default: `addons/`)
 5. The asset will be downloaded and extracted automatically
 
+### Installing Templates & Demo Projects
+
+When installing templates or full demo projects, you can select exactly what to import:
+
+![Smart Installation](../images/installfiletreescreenshot.png)
+
+- Use the file tree to select which files/folders to import
+- Filter by file type (Scripts, Scenes, Images, etc.)
+- Optionally import Input Actions and Autoloads
+- Preview the installation path before confirming
+
 !!! tip
     For Godot Shaders, clicking Install will redirect you to the shader's page on godotshaders.com where you can copy the shader code.
 
@@ -26,7 +37,7 @@ This guide will help you get started with AssetPlus in just a few minutes.
 1. Go to the **Installed** tab
 2. See all addons currently in your project
 3. AssetPlus will try to match installed addons with their online sources
-4. Right-click on any addon for options (uninstall, view details, etc.)
+4. Click on any addon to view details and manage it
 
 ## Creating Your Personal Library
 

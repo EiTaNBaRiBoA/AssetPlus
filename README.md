@@ -7,6 +7,8 @@
 
 A unified asset browser for Godot 4.x that brings together multiple asset sources into one powerful interface.
 
+![AssetPlus Store Browser](screens/storescreenshot.png)
+
 ## Features
 
 | Feature | Description |

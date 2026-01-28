@@ -34,6 +34,8 @@ The Global Library feature lets you:
 4. Optionally add a custom icon
 5. Click **Export**
 
+![Export Dialog](../images/exporttoglobalfromprojectscreenshot.png)
+
 ### Metadata
 
 The export dialog captures:

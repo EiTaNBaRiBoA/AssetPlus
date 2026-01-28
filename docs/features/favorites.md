@@ -2,11 +2,17 @@
 
 Save your favorite assets for quick access later. Favorites sync across all your Godot projects.
 
+![Favorites](../images/favoritesscreenshot.png)
+
 ## Adding Favorites
 
-1. Browse to any asset in the Store
-2. Click the **heart icon** on the asset card or in the detail view
-3. The asset is saved to your favorites
+You can favorite assets from multiple places:
+
+- **Store Browser** - Click the heart icon on any asset card or in the detail view
+- **Global Library** - Favorite your local `.godotpackage` files
+- **Installed Addons** - Favorite installed addons that were matched to online sources
+
+This is useful for keeping track of original asset links, even after installation.
 
 ## Viewing Favorites
 

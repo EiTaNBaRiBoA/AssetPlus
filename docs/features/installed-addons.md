@@ -2,6 +2,8 @@
 
 The **Installed** tab shows all addons currently in your project, helping you manage what's installed.
 
+![Installed Addons](../images/installedscreenshot.png)
+
 ## Addon Detection
 
 AssetPlus automatically scans your project's `addons/` folder and detects:
@@ -32,7 +34,7 @@ Click on an addon to see more details.
 
 ## Managing Addons
 
-Right-click on any addon for options:
+Click on any addon to open its detail view with options:
 
 - **Open in FileSystem** - Navigate to the addon folder
 - **View Online** - Open the asset's page (if source matched)
