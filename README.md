@@ -3,6 +3,7 @@
 [![Godot 4.3+](https://img.shields.io/badge/Godot-4.3%2B-blue?logo=godot-engine&logoColor=white)](https://godotengine.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/moongdevstudio/AssetPlus)](https://github.com/moongdevstudio/AssetPlus/releases)
+[![Documentation](https://img.shields.io/badge/docs-online-blue)](https://moongdevstudio.github.io/AssetPlus/)
 
 A unified asset browser for Godot 4.x that brings together multiple asset sources into one powerful interface.
 
@@ -11,7 +12,7 @@ A unified asset browser for Godot 4.x that brings together multiple asset source
 | Feature | Description |
 |---------|-------------|
 | **Multi-Source Browser** | Search Godot AssetLib, Godot Store Beta & Godot Shaders in one place |
-| **One-Click Install** | Install any asset directly into your project |
+| **One-Click Install** | Install addons, templates, or full demo projects with selective import |
 | **Installed Tracking** | See all addons in your project with source matching |
 | **Global Library** | Build a personal collection of reusable assets as `.godotpackage` files |
 | **Favorites Sync** | Save favorites, synced across all projects |
@@ -28,6 +29,12 @@ Build your personal asset collection:
 - Store packages in a central **Global Folder**
 - Install your packages into any project
 - Right-click export from FileSystem dock
+
+### Smart Installation
+When installing templates or demo projects:
+- Choose which files/folders to import
+- Optionally import input actions and autoloads
+- Preview what will be added to your project
 
 ### Auto-Update
 AssetPlus checks for updates at startup and notifies you when a new version is available. Install updates with one click, or disable auto-update in Settings.
@@ -67,6 +74,7 @@ MIT License - See [LICENSE](LICENSE)
 
 ## Links
 
+- [Documentation](https://moongdevstudio.github.io/AssetPlus/)
 - [Releases](https://github.com/moongdevstudio/AssetPlus/releases)
 - [Report Issues](https://github.com/moongdevstudio/AssetPlus/issues)
 

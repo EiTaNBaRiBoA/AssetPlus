@@ -1,0 +1,56 @@
+# Installed Addons
+
+The **Installed** tab shows all addons currently in your project, helping you manage what's installed.
+
+## Addon Detection
+
+AssetPlus automatically scans your project's `addons/` folder and detects:
+
+- Addon name (from `plugin.cfg`)
+- Version
+- Author
+- Description
+
+## Source Matching
+
+AssetPlus tries to match your installed addons with their online sources. When a match is found, you can:
+
+- See if updates are available
+- View the original asset page
+- Compare versions
+
+## Addon Information
+
+Each installed addon card shows:
+
+- Addon name
+- Current version
+- Author
+- Source (if matched)
+
+Click on an addon to see more details.
+
+## Managing Addons
+
+Right-click on any addon for options:
+
+- **Open in FileSystem** - Navigate to the addon folder
+- **View Online** - Open the asset's page (if source matched)
+- **Uninstall** - Remove the addon from your project
+
+!!! warning "Uninstall"
+    Uninstalling an addon deletes its entire folder. Make sure you don't have any modified files you want to keep.
+
+## Refreshing
+
+The addon list refreshes automatically when:
+
+- The plugin is enabled
+- Files change in the `addons/` folder
+- You install or uninstall an addon
+
+You can also manually refresh by clicking the refresh button.
+
+## Linkup Scan
+
+AssetPlus performs a "linkup scan" on startup to match installed addons with online sources. This runs in the background and doesn't affect editor performance.

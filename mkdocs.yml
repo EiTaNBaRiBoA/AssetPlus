@@ -1,0 +1,70 @@
+site_name: AssetPlus Documentation
+site_url: https://moongdevstudio.github.io/AssetPlus/
+site_description: Unified asset browser for Godot 4.x
+site_author: MoongDevStudio
+repo_url: https://github.com/moongdevstudio/AssetPlus
+repo_name: moongdevstudio/AssetPlus
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quick-start.md
+  - Features:
+    - Store Browser: features/store-browser.md
+    - Installed Addons: features/installed-addons.md
+    - Global Library: features/global-library.md
+    - Favorites: features/favorites.md
+    - Auto-Update: features/auto-update.md
+  - Reference:
+    - Settings: reference/settings.md
+    - .godotpackage Format: reference/godotpackage-format.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/moongdevstudio/AssetPlus
