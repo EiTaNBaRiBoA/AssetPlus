@@ -490,10 +490,13 @@ func _update_page() -> void:
 	if page_label:
 		page_label.text = "Page %d of %d" % [_current_page + 1, PAGES.size()]
 
-	# Update icon
-	var theme = EditorInterface.get_editor_theme()
-	if theme:
-		_icon_rect.texture = theme.get_icon(page["icon"], "EditorIcons")
+	# Update icon - use AssetPlus icon for welcome page
+	if _current_page == Page.WELCOME:
+		_icon_rect.texture = load("res://addons/assetplus/icon.png")
+	else:
+		var theme = EditorInterface.get_editor_theme()
+		if theme:
+			_icon_rect.texture = theme.get_icon(page["icon"], "EditorIcons")
 
 	# Update tab/toolbar preview
 	var show_tab_preview = page.get("tab_preview", false)

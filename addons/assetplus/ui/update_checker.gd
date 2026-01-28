@@ -8,7 +8,7 @@ const SettingsDialog = preload("res://addons/assetplus/ui/settings_dialog.gd")
 const GITHUB_REPO = "moongdevstudio/AssetPlus"
 const GITHUB_API_URL = "https://api.github.com/repos/%s/releases/latest"
 
-signal update_available(current_version: String, new_version: String, browse_url: String, download_url: String)
+signal update_available(current_version: String, new_version: String, browse_url: String, download_url: String, release_notes: String)
 signal check_complete(has_update: bool)
 
 var _http_request: HTTPRequest
@@ -70,6 +70,7 @@ func _on_request_completed(result: int, code: int, headers: PackedStringArray, b
 	var remote_version = tag_name.trim_prefix("v")
 	var browse_url = data.get("html_url", "https://github.com/%s/releases" % GITHUB_REPO)
 	var download_url = data.get("zipball_url", "")
+	var release_notes = data.get("body", "")
 
 	var current_version = _get_current_version()
 
@@ -77,7 +78,7 @@ func _on_request_completed(result: int, code: int, headers: PackedStringArray, b
 
 	if _is_newer_version(remote_version, current_version):
 		SettingsDialog.debug_print("New version available: %s" % remote_version)
-		update_available.emit(current_version, remote_version, browse_url, download_url)
+		update_available.emit(current_version, remote_version, browse_url, download_url, release_notes)
 		check_complete.emit(true)
 	else:
 		SettingsDialog.debug_print("AssetPlus is up to date")

@@ -363,11 +363,11 @@ func _on_check_updates() -> void:
 	_update_checker.check_for_updates(self)
 
 
-func _on_update_available(current_version: String, new_version: String, browse_url: String, download_url: String) -> void:
+func _on_update_available(current_version: String, new_version: String, browse_url: String, download_url: String, release_notes: String = "") -> void:
 	# Show update dialog
 	var UpdateDialog = load("res://addons/assetplus/ui/update_dialog.gd")
 	var dialog = UpdateDialog.new()
-	dialog.setup(current_version, new_version, browse_url, download_url)
+	dialog.setup(current_version, new_version, browse_url, download_url, release_notes)
 	EditorInterface.get_base_control().add_child(dialog)
 	dialog.popup_centered()
 

@@ -10,6 +10,7 @@ var _current_version: String
 var _new_version: String
 var _browse_url: String
 var _download_url: String
+var _release_notes: String
 
 var _install_btn: Button
 var _download_btn: Button
@@ -19,15 +20,17 @@ var _installer: RefCounted
 
 func _init() -> void:
 	title = "AssetPlus Update Available"
-	size = Vector2i(450, 320)
+	min_size = Vector2i(400, 0)
+	max_size = Vector2i(500, 300)
 	ok_button_text = "Later"
 
 
-func setup(current_version: String, new_version: String, browse_url: String, download_url: String) -> void:
+func setup(current_version: String, new_version: String, browse_url: String, download_url: String, release_notes: String = "") -> void:
 	_current_version = current_version
 	_new_version = new_version
 	_browse_url = browse_url
 	_download_url = download_url
+	_release_notes = release_notes
 
 
 func _ready() -> void:
@@ -36,7 +39,7 @@ func _ready() -> void:
 
 func _build_ui() -> void:
 	var main_vbox = VBoxContainer.new()
-	main_vbox.add_theme_constant_override("separation", 16)
+	main_vbox.add_theme_constant_override("separation", 10)
 	add_child(main_vbox)
 
 	# Header with icon
@@ -48,9 +51,7 @@ func _build_ui() -> void:
 	icon.custom_minimum_size = Vector2(48, 48)
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	var theme = EditorInterface.get_editor_theme()
-	if theme:
-		icon.texture = theme.get_icon("AssetLib", "EditorIcons")
+	icon.texture = load("res://addons/assetplus/icon.png")
 	header_hbox.add_child(icon)
 
 	var title_vbox = VBoxContainer.new()
@@ -70,17 +71,19 @@ func _build_ui() -> void:
 
 	main_vbox.add_child(HSeparator.new())
 
-	# Message
-	var message = RichTextLabel.new()
-	message.bbcode_enabled = true
-	message.fit_content = true
-	message.scroll_active = false
-	message.text = """[center]A new version of AssetPlus is available!
+	# Release notes (if available)
+	if not _release_notes.is_empty():
+		var notes_label = Label.new()
+		notes_label.text = "What's new:"
+		notes_label.add_theme_font_size_override("font_size", 13)
+		main_vbox.add_child(notes_label)
 
-[b]Install Now[/b] - Automatically download and install the update, then restart Godot.
-
-[b]View on Asset Library[/b] - Open the Asset Library page to manually download.[/center]"""
-	main_vbox.add_child(message)
+		var notes_text = Label.new()
+		notes_text.text = _release_notes
+		notes_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		notes_text.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+		notes_text.add_theme_font_size_override("font_size", 12)
+		main_vbox.add_child(notes_text)
 
 	# Progress label (hidden by default)
 	_progress_label = Label.new()
@@ -88,11 +91,6 @@ func _build_ui() -> void:
 	_progress_label.add_theme_color_override("font_color", Color(0.5, 0.7, 1.0))
 	_progress_label.visible = false
 	main_vbox.add_child(_progress_label)
-
-	# Spacer
-	var spacer = Control.new()
-	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	main_vbox.add_child(spacer)
 
 	# Buttons
 	var btn_hbox = HBoxContainer.new()

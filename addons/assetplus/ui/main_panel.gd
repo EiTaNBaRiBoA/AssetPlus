@@ -332,7 +332,7 @@ func _check_for_updates() -> void:
 	checker.check_for_updates(self)
 
 
-func _on_update_available(current_version: String, new_version: String, browse_url: String, download_url: String) -> void:
+func _on_update_available(current_version: String, new_version: String, browse_url: String, download_url: String, release_notes: String = "") -> void:
 	# Check if user has skipped this version
 	var settings = SettingsDialog.get_settings()
 	var skipped_version = settings.get("skipped_update_version", "")
@@ -342,7 +342,7 @@ func _on_update_available(current_version: String, new_version: String, browse_u
 
 	# Show update dialog
 	var dialog = UpdateDialog.new()
-	dialog.setup(current_version, new_version, browse_url, download_url)
+	dialog.setup(current_version, new_version, browse_url, download_url, release_notes)
 	EditorInterface.get_base_control().add_child(dialog)
 	dialog.confirmed.connect(func(): dialog.queue_free())
 	dialog.canceled.connect(func(): dialog.queue_free())
