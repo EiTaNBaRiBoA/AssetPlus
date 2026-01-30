@@ -826,6 +826,10 @@ func _analyze_zip() -> void:
 	# Detect package type - always scan even for GODOTPACKAGE to properly detect plugins
 	var has_plugin_cfg = false
 	var has_project_godot = false
+	var has_gdextension = false
+	var gdextension_path = ""
+	var gdextension_addon_root = ""
+	var gdextension_addon_folder = ""
 	var project_root = ""
 
 	for f in files:
@@ -852,6 +856,19 @@ func _analyze_zip() -> void:
 				elif parts.size() == 1:
 					_plugin_folder = "addon"
 
+		# Detect GDExtension files (for packages without plugin.cfg)
+		if f.ends_with(".gdextension"):
+			has_gdextension = true
+			gdextension_path = f
+			# Check if it's in a */addons/*/ structure
+			if "/addons/" in f:
+				var addons_idx = f.find("/addons/")
+				gdextension_addon_root = f.substr(0, addons_idx + 1)
+				var after_addons = f.substr(addons_idx + 8)  # Skip "/addons/"
+				var slash_idx = after_addons.find("/")
+				if slash_idx > 0:
+					gdextension_addon_folder = after_addons.substr(0, slash_idx)
+
 		if f.ends_with("project.godot"):
 			has_project_godot = true
 			_project_godot_path = f
@@ -873,6 +890,13 @@ func _analyze_zip() -> void:
 		_parse_project_godot()
 	elif has_plugin_cfg:
 		_package_type = PackageType.PLUGIN
+	elif has_gdextension and not gdextension_addon_folder.is_empty():
+		# GDExtension without plugin.cfg but with */addons/*/ structure
+		# Treat it like a plugin - install to addons/
+		_package_type = PackageType.PLUGIN
+		_addon_root = gdextension_addon_root
+		_plugin_folder = gdextension_addon_folder
+		SettingsDialog.debug_print("Install: Detected GDExtension addon: %s (root: %s)" % [_plugin_folder, _addon_root])
 	else:
 		_package_type = PackageType.ASSET
 		# Set default install path to assets/ (folder name will be determined in _build_asset_file_list)
@@ -2221,6 +2245,11 @@ func _on_confirmed() -> void:
 	# Adapt load/preload paths in scripts (for templates with custom install root)
 	_adapt_script_paths_in_files(install_root)
 
+	# Adapt .gdextension files if install path differs from default addons/ path
+	# Skip for plugins installed to res://addons/ (install_root is empty or res://)
+	if not install_root.is_empty() and install_root != "res://" and not install_root.begins_with("res://addons"):
+		_adapt_gdextension_paths(install_root, installed_paths)
+
 	# Import project settings (input actions and autoloads)
 	var imported_inputs_count := 0
 	SettingsDialog.debug_print("IMPORT CHECK: _package_type=%d (PROJECT=%d, GODOTPACKAGE=%d)" % [_package_type, PackageType.PROJECT, PackageType.GODOTPACKAGE])
@@ -2267,6 +2296,7 @@ func _on_confirmed() -> void:
 	await get_tree().process_frame
 
 	# Scan filesystem to register new files and assign UIDs
+	SettingsDialog.debug_print("Starting filesystem scan...")
 	var fs = EditorInterface.get_resource_filesystem()
 	if fs.has_method("scan_sources"):
 		fs.scan_sources()
@@ -2274,7 +2304,12 @@ func _on_confirmed() -> void:
 		fs.scan()
 
 	# Wait for filesystem scan to complete (uses signal, not fixed timer)
-	await _wait_for_filesystem_scan_complete()
+	SettingsDialog.debug_print("Waiting for filesystem scan...")
+	if is_inside_tree():
+		await _wait_for_filesystem_scan_complete()
+	else:
+		SettingsDialog.debug_print("WARNING: Dialog no longer in tree, skipping scan wait")
+	SettingsDialog.debug_print("Filesystem scan done")
 
 	# Re-enable plugin if it was enabled before the update
 	if plugin_was_enabled and not plugin_to_reenable.is_empty():
@@ -3277,6 +3312,161 @@ func _adapt_script_paths_in_files(install_root: String) -> void:
 
 	if files_updated > 0:
 		SettingsDialog.debug_print(" Updated %d files with %d path replacements" % [files_updated, paths_replaced])
+
+
+func _adapt_gdextension_paths(install_root: String, installed_paths: Array) -> void:
+	## Adapt paths in .gdextension files when installing to a custom location
+	## GDExtension files contain hardcoded res:// paths that need to match the install location
+
+	# Find the addon folder name from installed paths
+	var addon_folder := ""
+	for path in installed_paths:
+		if path.begins_with("res://"):
+			# Extract the first folder component after res://
+			var rel = path.substr(6)  # Remove "res://"
+			var slash_pos = rel.find("/")
+			if slash_pos > 0:
+				addon_folder = rel.substr(0, slash_pos)
+				break
+
+	if addon_folder.is_empty():
+		return
+
+	# The actual install path
+	var actual_install_path = install_root if install_root != "res://" else "res://"
+	if actual_install_path == "res://":
+		actual_install_path = "res://" + addon_folder
+
+	# Search for .gdextension files in the installed folders
+	for folder_path in installed_paths:
+		if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(folder_path)):
+			continue
+
+		var gdext_files = _find_gdextension_files(folder_path)
+
+		for gdext_path in gdext_files:
+			_update_gdextension_file(gdext_path, actual_install_path)
+
+
+func _find_gdextension_files(folder_path: String) -> Array:
+	## Find all .gdextension files in a folder recursively
+	var files: Array = []
+	var dir = DirAccess.open(folder_path)
+	if dir == null:
+		return files
+
+	dir.list_dir_begin()
+	var file_name = dir.get_next()
+	while not file_name.is_empty():
+		var full_path = folder_path.path_join(file_name)
+		if dir.current_is_dir():
+			if not file_name.begins_with("."):
+				files.append_array(_find_gdextension_files(full_path))
+		else:
+			if file_name.ends_with(".gdextension"):
+				files.append(full_path)
+		file_name = dir.get_next()
+	dir.list_dir_end()
+
+	return files
+
+
+func _update_gdextension_file(gdext_path: String, actual_install_path: String) -> void:
+	## Update paths in a .gdextension file to match the actual install location
+
+	var file = FileAccess.open(gdext_path, FileAccess.READ)
+	if file == null:
+		SettingsDialog.debug_print(" Cannot read .gdextension file: %s" % gdext_path)
+		return
+
+	var content = file.get_as_text()
+	file.close()
+
+	# Check if paths need updating
+	# GDExtension files typically have paths like res://addons/addonname/...
+	# We need to replace the base path with the actual install path
+
+	# Find what path pattern is used in the file (look for res://addons/ or res://something/)
+	var regex = RegEx.new()
+	regex.compile('res://([^/"]+)/')
+	var match_result = regex.search(content)
+
+	if match_result == null:
+		return  # No res:// paths found
+
+	var original_base_folder = match_result.get_string(1)  # e.g., "addons"
+	var original_pattern = "res://" + original_base_folder + "/"
+
+	# Determine what the new base path should be
+	# actual_install_path is like "res://assets/terrabrush" or "res://addons/terrabrush"
+	var new_base_path = actual_install_path
+	if not new_base_path.ends_with("/"):
+		# Get the parent folder path (e.g., res://assets/terrabrush -> res://assets/)
+		var last_slash = new_base_path.rfind("/")
+		if last_slash > 6:  # After "res://"
+			new_base_path = new_base_path.substr(0, last_slash + 1)
+		else:
+			new_base_path = "res://"
+
+	# Only update if the paths are different
+	if original_pattern == new_base_path:
+		return
+
+	# Actually we need to be smarter - replace the full addon path pattern
+	# e.g., res://addons/terrabrush/ -> res://assets/terrabrush/
+
+	# Find the full addon path in the file (res://addons/addonname/)
+	var addon_path_regex = RegEx.new()
+	addon_path_regex.compile('res://[^"\\s]+/')
+	var all_paths = addon_path_regex.search_all(content)
+
+	if all_paths.is_empty():
+		return
+
+	# Find the most common base path (the addon's root)
+	var path_counts: Dictionary = {}
+	for m in all_paths:
+		var path = m.get_string(0)
+		# Extract up to the addon folder (e.g., res://addons/terrabrush/)
+		var parts = path.split("/")
+		if parts.size() >= 4:  # res: / / addons / addonname / ...
+			var base = parts[0] + "//" + parts[2] + "/" + parts[3] + "/"
+			path_counts[base] = path_counts.get(base, 0) + 1
+
+	if path_counts.is_empty():
+		return
+
+	# Find the most common path (that's likely the addon root)
+	var original_addon_path := ""
+	var max_count := 0
+	for path in path_counts:
+		if path_counts[path] > max_count:
+			max_count = path_counts[path]
+			original_addon_path = path
+
+	if original_addon_path.is_empty():
+		return
+
+	# Build the new addon path
+	var new_addon_path = actual_install_path
+	if not new_addon_path.ends_with("/"):
+		new_addon_path += "/"
+
+	# Only proceed if paths are actually different
+	if original_addon_path == new_addon_path:
+		return
+
+	SettingsDialog.debug_print(" Adapting .gdextension: %s -> %s" % [original_addon_path, new_addon_path])
+
+	# Replace all occurrences
+	var new_content = content.replace(original_addon_path, new_addon_path)
+
+	if new_content != content:
+		var write_file = FileAccess.open(gdext_path, FileAccess.WRITE)
+		if write_file:
+			write_file.store_string(new_content)
+			write_file.close()
+			SettingsDialog.debug_print(" Updated .gdextension file: %s" % gdext_path)
 
 
 func _collect_uids_for_paths(paths: Array) -> Array:

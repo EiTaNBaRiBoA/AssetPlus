@@ -13,12 +13,15 @@ signal extract_package_requested(asset_info: Dictionary, target_folder: String)
 signal metadata_edited(asset_info: Dictionary, new_metadata: Dictionary)
 
 const SettingsDialog = preload("res://addons/assetplus/ui/settings_dialog.gd")
+const ImageGalleryViewer = preload("res://addons/assetplus/ui/image_gallery_viewer.gd")
 
 const SOURCE_GODOT = "Godot AssetLib"
 const SOURCE_GODOT_BETA = "Godot Store Beta"
 const SOURCE_SHADERS = "Godot Shaders"
 
 var _icon_rect: TextureRect
+var _icon_panel: PanelContainer
+var _gallery_btn: Button
 var _title_label: Label
 var _author_label: Label
 var _version_label: Label
@@ -30,6 +33,7 @@ var _install_btn: Button
 var _update_btn: Button
 var _open_browser_btn: Button
 var _favorite_btn: Button
+var _like_count_label: Label
 var _explore_btn: MenuButton
 var _explore_popup: PopupMenu
 var _remove_global_btn: Button
@@ -41,12 +45,17 @@ var _file_list_btn: Button
 
 var _asset_info: Dictionary = {}
 var _is_favorite: bool = false
+
+
+func get_asset_id() -> String:
+	return _asset_info.get("asset_id", "")
 var _is_installed: bool = false
 var _has_update: bool = false
 var _update_version: String = ""
 var _download_url: String = ""
 var _http_request: HTTPRequest
 var _tracked_files: Array = []  # Array of {path: String, uid: String}
+var _gallery_images: Array = []  # Array of {url: String, thumbnail_url: String, texture: Texture2D}
 
 
 func _init() -> void:
@@ -70,23 +79,66 @@ func _build_ui() -> void:
 	left_vbox.custom_minimum_size.x = 180
 	main_hbox.add_child(left_vbox)
 
-	# Icon
-	var icon_panel = PanelContainer.new()
+	# Icon - use clip_children to ensure rounded corners work with image
+	_icon_panel = PanelContainer.new()
 	var icon_style = StyleBoxFlat.new()
 	icon_style.bg_color = Color(0.12, 0.12, 0.15)
 	icon_style.set_corner_radius_all(8)
-	icon_panel.add_theme_stylebox_override("panel", icon_style)
-	icon_panel.custom_minimum_size = Vector2(160, 160)
-	left_vbox.add_child(icon_panel)
-
-	var icon_center = CenterContainer.new()
-	icon_panel.add_child(icon_center)
+	_icon_panel.add_theme_stylebox_override("panel", icon_style)
+	_icon_panel.custom_minimum_size = Vector2(180, 180)
+	_icon_panel.clip_children = CanvasItem.CLIP_CHILDREN_AND_DRAW
+	left_vbox.add_child(_icon_panel)
 
 	_icon_rect = TextureRect.new()
-	_icon_rect.custom_minimum_size = Vector2(128, 128)
-	_icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_icon_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_icon_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_icon_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon_center.add_child(_icon_rect)
+	_icon_rect.mouse_filter = Control.MOUSE_FILTER_STOP
+	_icon_rect.gui_input.connect(_on_icon_clicked)
+	_icon_panel.add_child(_icon_rect)
+
+	# Gallery button overlay (bottom-right corner of image)
+	# Use a Control wrapper to position properly inside PanelContainer
+	var gallery_wrapper = Control.new()
+	gallery_wrapper.set_anchors_preset(Control.PRESET_FULL_RECT)
+	gallery_wrapper.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_icon_panel.add_child(gallery_wrapper)
+
+	_gallery_btn = Button.new()
+	_gallery_btn.text = "1/1"
+	_gallery_btn.tooltip_text = "View gallery"
+	_gallery_btn.add_theme_font_size_override("font_size", 11)
+	_gallery_btn.size = Vector2(36, 22)
+	# Position at bottom-right
+	_gallery_btn.anchor_left = 1.0
+	_gallery_btn.anchor_right = 1.0
+	_gallery_btn.anchor_top = 1.0
+	_gallery_btn.anchor_bottom = 1.0
+	_gallery_btn.offset_left = -42
+	_gallery_btn.offset_right = -6
+	_gallery_btn.offset_top = -28
+	_gallery_btn.offset_bottom = -6
+	# Dark semi-transparent background
+	var gallery_btn_style = StyleBoxFlat.new()
+	gallery_btn_style.bg_color = Color(0, 0, 0, 0.75)
+	gallery_btn_style.set_corner_radius_all(4)
+	gallery_btn_style.content_margin_left = 6
+	gallery_btn_style.content_margin_right = 6
+	gallery_btn_style.content_margin_top = 2
+	gallery_btn_style.content_margin_bottom = 2
+	_gallery_btn.add_theme_stylebox_override("normal", gallery_btn_style)
+	_gallery_btn.add_theme_stylebox_override("pressed", gallery_btn_style)
+	var gallery_btn_hover = StyleBoxFlat.new()
+	gallery_btn_hover.bg_color = Color(0.2, 0.45, 0.9, 0.9)
+	gallery_btn_hover.set_corner_radius_all(4)
+	gallery_btn_hover.content_margin_left = 6
+	gallery_btn_hover.content_margin_right = 6
+	gallery_btn_hover.content_margin_top = 2
+	gallery_btn_hover.content_margin_bottom = 2
+	_gallery_btn.add_theme_stylebox_override("hover", gallery_btn_hover)
+	_gallery_btn.pressed.connect(_on_gallery_pressed)
+	_gallery_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	gallery_wrapper.add_child(_gallery_btn)
 
 	# Get editor theme for icons
 	var theme = EditorInterface.get_editor_theme()
@@ -172,12 +224,17 @@ func _build_ui() -> void:
 	_extract_package_btn.visible = false  # Only show for global folder items
 	left_vbox.add_child(_extract_package_btn)
 
-	# Favorite button at the bottom
+	# Favorite button (with heart icon, no like count displayed)
 	_favorite_btn = Button.new()
-	_favorite_btn.text = "Add to Favorites"
-	_favorite_btn.icon = theme.get_icon("Favorites", "EditorIcons")
+	_favorite_btn.text = "  Add to Favorites"
+	_favorite_btn.icon = theme.get_icon("Heart", "EditorIcons")
 	_favorite_btn.pressed.connect(_on_favorite_pressed)
 	left_vbox.add_child(_favorite_btn)
+
+	# Keep _like_count_label for compatibility but hidden
+	_like_count_label = Label.new()
+	_like_count_label.visible = false
+	add_child(_like_count_label)
 
 	# File list button - shows tracked files
 	_file_list_btn = Button.new()
@@ -428,9 +485,9 @@ func _update_install_button() -> void:
 
 func _update_favorite_button() -> void:
 	if _is_favorite:
-		_favorite_btn.text = "Remove from Favorites"
+		_favorite_btn.text = "  Remove from Favorites"
 	else:
-		_favorite_btn.text = "Add to Favorites"
+		_favorite_btn.text = "  Add to Favorites"
 
 
 # ===== FETCH DETAILS =====
@@ -493,6 +550,22 @@ func _on_assetlib_details_received(result: int, code: int, headers: PackedString
 		_asset_info["category"] = data.get("category", "")
 		_asset_info["description"] = data.get("description", "")
 		_asset_info["download_url"] = _download_url
+
+		# Extract preview images if available
+		var previews = data.get("previews", [])
+		if previews is Array and previews.size() > 0:
+			_gallery_images.clear()
+			for preview in previews:
+				if preview is Dictionary:
+					var preview_url = preview.get("link", "")
+					var thumb_url = preview.get("thumbnail", preview_url)
+					if not preview_url.is_empty():
+						_gallery_images.append({
+							"url": preview_url,
+							"thumbnail_url": thumb_url,
+							"texture": null
+						})
+			_update_gallery_button()
 
 
 func _fetch_beta_details() -> void:
@@ -587,6 +660,29 @@ func _on_beta_details_received(result: int, code: int, headers: PackedStringArra
 		_download_url = "https://store-beta.godotengine.org/asset/%s/%s/download/%s/" % [publisher, slug, download_id]
 		_asset_info["download_url"] = _download_url
 
+	# Parse gallery images from tiny-slider or image elements
+	# Look for image URLs in the page (objectstorage URLs)
+	_gallery_images.clear()
+	var img_regex = RegEx.new()
+	img_regex.compile('https://asset-store[^"\'\\s]+\\.(png|jpg|jpeg|webp|gif)')
+	var img_matches = img_regex.search_all(html)
+	var seen_urls: Dictionary = {}
+	for img_match in img_matches:
+		var img_url = img_match.get_string(0)
+		# Skip if already seen or if it's the main thumbnail
+		if seen_urls.has(img_url):
+			continue
+		seen_urls[img_url] = true
+		# Skip small thumbnails (often contain "thumb" or small dimensions)
+		if "thumb" in img_url.to_lower() and _gallery_images.size() > 0:
+			continue
+		_gallery_images.append({
+			"url": img_url,
+			"thumbnail_url": img_url,
+			"texture": null
+		})
+	_update_gallery_button()
+
 
 func _fetch_shader_details() -> void:
 	var browse_url = _asset_info.get("browse_url", "")
@@ -661,6 +757,28 @@ func _on_shader_details_received(result: int, code: int, headers: PackedStringAr
 
 	if _description.text == "Loading..." or _description.text.is_empty():
 		_description.text = "A shader for Godot. Visit the page for more details and to copy the shader code."
+
+	# Parse gallery images from shader page
+	_gallery_images.clear()
+	var img_regex = RegEx.new()
+	# Look for images in featured image, content, or any img tags
+	img_regex.compile('(?:src|href)=["\']?(https?://[^"\'\\s>]+\\.(?:png|jpg|jpeg|webp|gif))["\']?')
+	var img_matches = img_regex.search_all(html)
+	var seen_urls: Dictionary = {}
+	for img_match in img_matches:
+		var img_url = img_match.get_string(1)
+		if seen_urls.has(img_url):
+			continue
+		# Skip small icons and UI images
+		if "icon" in img_url.to_lower() or "logo" in img_url.to_lower() or "avatar" in img_url.to_lower():
+			continue
+		seen_urls[img_url] = true
+		_gallery_images.append({
+			"url": img_url,
+			"thumbnail_url": img_url,
+			"texture": null
+		})
+	_update_gallery_button()
 
 
 func _clean_html(text: String) -> String:
@@ -838,6 +956,12 @@ func set_update_available(has_update: bool, new_version: String = "") -> void:
 		else:
 			_update_btn.text = "Update"
 			_update_btn.tooltip_text = ""
+
+
+func set_like_count(count: int) -> void:
+	## Update like count display
+	if _like_count_label:
+		_like_count_label.text = str(count) if count > 0 else "0"
 
 
 func _on_remove_global_pressed() -> void:
@@ -1273,3 +1397,76 @@ func _get_icon_for_type(type_name: String) -> Texture2D:
 			return theme.get_icon("File", "EditorIcons")
 
 
+func _on_icon_clicked(event: InputEvent) -> void:
+	## Open gallery when clicking on the icon image
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			_on_gallery_pressed()
+
+
+func _on_gallery_pressed() -> void:
+	## Open the image gallery viewer
+	var images: Array = []
+	var main_url = _asset_info.get("icon_url", "")
+
+	# Check if main image is already in gallery images (avoid duplicates)
+	var main_in_gallery = false
+	for img in _gallery_images:
+		if img.get("url", "") == main_url:
+			main_in_gallery = true
+			break
+
+	# Add main image first if not already in gallery
+	if not main_in_gallery and (not main_url.is_empty() or _icon_rect.texture):
+		images.append({
+			"url": main_url,
+			"texture": _icon_rect.texture
+		})
+
+	# Add gallery images
+	for img in _gallery_images:
+		# Pass the current texture if this is the main image
+		if img.get("url", "") == main_url and _icon_rect.texture:
+			images.append({
+				"url": img.get("url", ""),
+				"thumbnail_url": img.get("thumbnail_url", ""),
+				"texture": _icon_rect.texture
+			})
+		else:
+			images.append(img)
+
+	if images.is_empty():
+		return
+
+	# Create gallery viewer as a popup window for proper z-ordering
+	var gallery = ImageGalleryViewer.new()
+	# Add to editor popup parent for proper z-index above dialogs
+	var popup_parent = get_tree().root
+	popup_parent.add_child(gallery)
+	gallery.setup(images, 0)
+	gallery.closed.connect(func(): pass)  # Gallery handles its own cleanup
+
+
+func set_gallery_images(images: Array) -> void:
+	## Set additional gallery images (called after fetching details)
+	_gallery_images = images
+	_update_gallery_button()
+
+
+func _update_gallery_button() -> void:
+	## Update gallery button text with image count
+	var count = _gallery_images.size()
+	# Add 1 for main image if it's not already in gallery
+	var main_url = _asset_info.get("icon_url", "")
+	var main_in_gallery = false
+	for img in _gallery_images:
+		if img.get("url", "") == main_url:
+			main_in_gallery = true
+			break
+	if not main_in_gallery and (not main_url.is_empty() or _icon_rect.texture):
+		count += 1
+
+	if count <= 1:
+		_gallery_btn.text = "1/1"
+	else:
+		_gallery_btn.text = "1/%d" % count

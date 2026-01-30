@@ -45,4 +45,13 @@ func _get_plugin_name() -> String:
 
 
 func _get_plugin_icon() -> Texture2D:
-	return load("res://addons/assetplus/iconbw.png")
+	var icon = load("res://addons/assetplus/iconbw.png")
+	if icon:
+		return icon
+	# Fallback: try to load as ImageTexture directly
+	var image = Image.new()
+	var path = "res://addons/assetplus/iconbw.png"
+	if image.load(ProjectSettings.globalize_path(path)) == OK:
+		return ImageTexture.create_from_image(image)
+	# Last resort: return editor's default icon
+	return EditorInterface.get_editor_theme().get_icon("Node", "EditorIcons")

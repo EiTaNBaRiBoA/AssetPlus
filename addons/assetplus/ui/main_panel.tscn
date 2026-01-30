@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://d0gg4l38375l7" path="res://addons/assetplus/ui/main_panel.gd" id="1"]
 
-[sub_resource type="DPITexture" id="DPITexture_wy13l"]
+[sub_resource type="DPITexture" id="DPITexture_vwdxe"]
 _source = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><path fill=\"#e0e0e0\" d=\"M10.168 8.754a5 5 0 1 0-1.414 1.414l4.316 4.316 1.414-1.414zM6 3a3 3 0 0 1 0 6 3 3 0 0 1 0-6z\"/></svg>
 "
 saturation = 2.0
@@ -12,21 +12,21 @@ Color(0.37254903, 1, 0.5921569, 1): Color(0.45, 0.95, 0.5, 1),
 Color(1, 0.8666667, 0.39607844, 1): Color(0.83, 0.78, 0.62, 1)
 }
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_3lixe"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_omgw7"]
 bg_color = Color(0.2, 0.4, 0.6, 0.9)
 corner_radius_top_left = 15
 corner_radius_top_right = 15
 corner_radius_bottom_right = 15
 corner_radius_bottom_left = 15
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_0kclr"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_dbk8l"]
 bg_color = Color(0.3, 0.5, 0.7, 0.95)
 corner_radius_top_left = 15
 corner_radius_top_right = 15
 corner_radius_bottom_right = 15
 corner_radius_bottom_left = 15
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_taguq"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_mfryd"]
 bg_color = Color(0.3, 0.4, 0.55, 1)
 border_width_bottom = 2
 border_color = Color(0.5, 0.7, 1, 1)
@@ -35,7 +35,7 @@ corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-[sub_resource type="DPITexture" id="DPITexture_ql8l2"]
+[sub_resource type="DPITexture" id="DPITexture_h87o5"]
 _source = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><g fill=\"none\" stroke=\"#e0e0e0\" stroke-linejoin=\"round\" stroke-width=\"2\"><path d=\"M8 1v9l4-4m-4 4L4 6\"/><path stroke-linecap=\"round\" d=\"M2 10v4h12v-4\"/></g></svg>
 "
 saturation = 2.0
@@ -45,21 +45,21 @@ Color(0.37254903, 1, 0.5921569, 1): Color(0.45, 0.95, 0.5, 1),
 Color(1, 0.8666667, 0.39607844, 1): Color(0.83, 0.78, 0.62, 1)
 }
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_8yv27"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_sf5nl"]
 bg_color = Color(0.18, 0.18, 0.2, 1)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_is0m3"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_k1ias"]
 bg_color = Color(0.22, 0.22, 0.25, 1)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-[sub_resource type="DPITexture" id="DPITexture_pibxw"]
+[sub_resource type="DPITexture" id="DPITexture_r141h"]
 _source = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><path fill=\"#e0e0e0\" d=\"m14.564 2-2.244.328.818 1.9 1.715-.25zm-4.223.615-1.978.29.818 1.902 1.979-.29zm-3.959.578-1.978.29.818 1.902 1.979-.29zm-3.957.578-1.714.25L1 6l2.244-.328zM1 7v6a2 2 0 0 0 2 2h12V7z\"/></svg>
 "
 saturation = 2.0
@@ -69,21 +69,21 @@ Color(0.37254903, 1, 0.5921569, 1): Color(0.45, 0.95, 0.5, 1),
 Color(1, 0.8666667, 0.39607844, 1): Color(0.83, 0.78, 0.62, 1)
 }
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_qdo06"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_eg63y"]
 bg_color = Color(0.18, 0.18, 0.2, 1)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_kj2cg"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_t3tru"]
 bg_color = Color(0.22, 0.22, 0.25, 1)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-[sub_resource type="DPITexture" id="DPITexture_c5i4a"]
+[sub_resource type="DPITexture" id="DPITexture_jp55u"]
 _source = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><path fill=\"#fc7f7f\" d=\"M2.781 9.155C2.72 9.102 1 7.531 1 5.656 1 3.367 2.398 2 4.734 2 6.102 2 7.383 3.39 8 4c.617-.61 1.898-2 3.266-2C13.602 2 15 3.367 15 5.656c0 1.875-1.719 3.446-1.79 3.516l-4.866 4.687a.485.485 0 0 1-.688 0z\"/></svg>
 "
 saturation = 2.0
@@ -93,21 +93,21 @@ Color(0.37254903, 1, 0.5921569, 1): Color(0.45, 0.95, 0.5, 1),
 Color(1, 0.8666667, 0.39607844, 1): Color(0.83, 0.78, 0.62, 1)
 }
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_5lc0g"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_y0q4s"]
 bg_color = Color(0.18, 0.18, 0.2, 1)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_3lpd2"]
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_8yx1p"]
 bg_color = Color(0.22, 0.22, 0.25, 1)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-[sub_resource type="DPITexture" id="DPITexture_6wvnv"]
+[sub_resource type="DPITexture" id="DPITexture_nqv2s"]
 _source = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><path fill=\"#e0e0e0\" d=\"M2 2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-4a1 1 0 0 1-1-1V3a1 1 0 0 0-1-1z\"/></svg>
 "
 saturation = 2.0
@@ -117,7 +117,7 @@ Color(0.37254903, 1, 0.5921569, 1): Color(0.45, 0.95, 0.5, 1),
 Color(1, 0.8666667, 0.39607844, 1): Color(0.83, 0.78, 0.62, 1)
 }
 
-[sub_resource type="DPITexture" id="DPITexture_f6oif"]
+[sub_resource type="DPITexture" id="DPITexture_6fl3m"]
 _source = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><path fill=\"#e0e0e0\" d=\"M3 2a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9c1.105 0 1.818-.91 2-2l1-6a1 1 0 0 0-1-1H6c-.552 0-.909.455-1 1l-1 6c-.091.545-.448 1-1 1a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1 1 1 0 0 0 1 1h5a1 1 0 0 0-1-1H7a2 2 0 0 0-2-2H3z\"/></svg>
 "
 saturation = 2.0
@@ -127,7 +127,7 @@ Color(0.37254903, 1, 0.5921569, 1): Color(0.45, 0.95, 0.5, 1),
 Color(1, 0.8666667, 0.39607844, 1): Color(0.83, 0.78, 0.62, 1)
 }
 
-[sub_resource type="DPITexture" id="DPITexture_4hpyn"]
+[sub_resource type="DPITexture" id="DPITexture_yuir4"]
 _source = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><path fill=\"#e0e0e0\" d=\"M3 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V4l-3-3h-1v6H3zm1 0v5h3V1zm4 8a1 1 0 0 1 0 4 1 1 0 0 1 0-4z\"/></svg>
 "
 saturation = 2.0
@@ -137,7 +137,7 @@ Color(0.37254903, 1, 0.5921569, 1): Color(0.45, 0.95, 0.5, 1),
 Color(1, 0.8666667, 0.39607844, 1): Color(0.83, 0.78, 0.62, 1)
 }
 
-[sub_resource type="DPITexture" id="DPITexture_ibd35"]
+[sub_resource type="DPITexture" id="DPITexture_32p2u"]
 _source = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\"><path fill=\"#e0e0e0\" d=\"M4 1 3 3l1 2v4H2v3.5a2.5 2.5 0 0 0 5 0V9H5V5l1-2-1-2zm6 .174a3 3 0 0 0 0 5.652V14a1 1 0 0 0 2 0V6.824a3 3 0 0 0 0-5.648V4a1 1 0 0 1-2 0z\"/></svg>
 "
 saturation = 2.0
@@ -171,7 +171,7 @@ placeholder_text = "Search assets..."
 [node name="SearchBtn" type="Button" parent="VBox/TopBar" unique_id=531705943]
 layout_mode = 2
 text = "Search"
-icon = SubResource("DPITexture_wy13l")
+icon = SubResource("DPITexture_vwdxe")
 
 [node name="FilterCatLabel" type="Label" parent="VBox/TopBar" unique_id=2115032051]
 visible = false
@@ -182,23 +182,27 @@ text = "Category:"
 visible = false
 layout_mode = 2
 selected = 0
-item_count = 8
+item_count = 10
 popup/item_0/text = "All"
 popup/item_0/id = 0
-popup/item_1/text = "2D Shader"
+popup/item_1/text = "2D"
 popup/item_1/id = 1
 popup/item_2/text = "2D Tools"
 popup/item_2/id = 2
-popup/item_3/text = "Misc"
+popup/item_3/text = "3D"
 popup/item_3/id = 3
-popup/item_4/text = "Tools"
+popup/item_4/text = "3D, Materials"
 popup/item_4/id = 4
-popup/item_5/text = "Unknown"
+popup/item_5/text = "3D, Templates"
 popup/item_5/id = 5
-popup/item_6/text = "VFX"
+popup/item_6/text = "Tools"
 popup/item_6/id = 6
-popup/item_7/text = "asset"
+popup/item_7/text = "Tools, 3D"
 popup/item_7/id = 7
+popup/item_8/text = "VFX"
+popup/item_8/id = 8
+popup/item_9/text = "asset"
+popup/item_9/id = 9
 
 [node name="FilterSourceLabel" type="Label" parent="VBox/TopBar" unique_id=992030587]
 visible = false
@@ -209,19 +213,17 @@ text = "Source:"
 visible = false
 layout_mode = 2
 selected = 0
-item_count = 6
+item_count = 5
 popup/item_0/text = "All"
 popup/item_0/id = 0
 popup/item_1/text = "Godot AssetLib"
 popup/item_1/id = 1
 popup/item_2/text = "Godot Store Beta"
 popup/item_2/id = 2
-popup/item_3/text = "GitHub"
+popup/item_3/text = "GlobalFolder"
 popup/item_3/id = 3
-popup/item_4/text = "Godot Shaders"
+popup/item_4/text = "Unknown"
 popup/item_4/id = 4
-popup/item_5/text = "Unknown"
-popup/item_5/id = 5
 
 [node name="SortLabel" type="Label" parent="VBox/TopBar" unique_id=243971069]
 layout_mode = 2
@@ -233,9 +235,9 @@ selected = 0
 item_count = 3
 popup/item_0/text = "Recently Updated"
 popup/item_0/id = 0
-popup/item_1/text = "Name"
+popup/item_1/text = "Relevance"
 popup/item_1/id = 1
-popup/item_2/text = "Rating"
+popup/item_2/text = "Most Liked"
 popup/item_2/id = 2
 
 [node name="CatLabel" type="Label" parent="VBox/TopBar" unique_id=810933379]
@@ -245,29 +247,23 @@ text = "Category:"
 [node name="CategoryFilter" type="OptionButton" parent="VBox/TopBar" unique_id=635717681]
 layout_mode = 2
 selected = 0
-item_count = 11
+item_count = 8
 popup/item_0/text = "All"
 popup/item_0/id = 0
-popup/item_1/text = "2D Tools"
+popup/item_1/text = "2D"
 popup/item_1/id = 1
-popup/item_2/text = "3D Tools"
+popup/item_2/text = "3D"
 popup/item_2/id = 2
-popup/item_3/text = "Shaders"
+popup/item_3/text = "Tool"
 popup/item_3/id = 3
-popup/item_4/text = "Materials"
+popup/item_4/text = "Audio"
 popup/item_4/id = 4
-popup/item_5/text = "Tools"
+popup/item_5/text = "Template"
 popup/item_5/id = 5
-popup/item_6/text = "Scripts"
+popup/item_6/text = "Materials"
 popup/item_6/id = 6
-popup/item_7/text = "Misc"
+popup/item_7/text = "VFX"
 popup/item_7/id = 7
-popup/item_8/text = "Templates"
-popup/item_8/id = 8
-popup/item_9/text = "Projects"
-popup/item_9/id = 9
-popup/item_10/text = "Demos"
-popup/item_10/id = 10
 
 [node name="SiteLabel" type="Label" parent="VBox/TopBar" unique_id=577963522]
 layout_mode = 2
@@ -277,9 +273,9 @@ text = "Site:"
 layout_mode = 2
 selected = 0
 item_count = 4
-popup/item_0/text = "Godot AssetLib"
+popup/item_0/text = "Godot Store Beta"
 popup/item_0/id = 0
-popup/item_1/text = "Godot Store Beta"
+popup/item_1/text = "Godot AssetLib"
 popup/item_1/id = 1
 popup/item_2/text = "Godot Shaders"
 popup/item_2/id = 2
@@ -291,8 +287,8 @@ layout_mode = 2
 tooltip_text = "Show help / tutorial"
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_font_sizes/font_size = 16
-theme_override_styles/normal = SubResource("StyleBoxFlat_3lixe")
-theme_override_styles/hover = SubResource("StyleBoxFlat_0kclr")
+theme_override_styles/normal = SubResource("StyleBoxFlat_omgw7")
+theme_override_styles/hover = SubResource("StyleBoxFlat_dbk8l")
 text = "?"
 
 [node name="TabsBar" type="HBoxContainer" parent="VBox" unique_id=1920454212]
@@ -303,55 +299,56 @@ layout_mode = 2
 theme_override_colors/font_color = Color(0.9, 0.9, 0.95, 1)
 theme_override_colors/font_pressed_color = Color(0.9, 0.9, 0.95, 1)
 theme_override_colors/font_hover_color = Color(1, 1, 1, 1)
-theme_override_styles/normal = SubResource("StyleBoxFlat_taguq")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_taguq")
-theme_override_styles/hover = SubResource("StyleBoxFlat_taguq")
+theme_override_styles/normal = SubResource("StyleBoxFlat_mfryd")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_mfryd")
+theme_override_styles/hover = SubResource("StyleBoxFlat_mfryd")
 toggle_mode = true
 button_pressed = true
 text = "Store"
-icon = SubResource("DPITexture_ql8l2")
+icon = SubResource("DPITexture_h87o5")
 
 [node name="TabInstalled" type="Button" parent="VBox/TabsBar" unique_id=536762882]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.5, 0.5, 0.55, 1)
 theme_override_colors/font_pressed_color = Color(0.6, 0.6, 0.65, 1)
 theme_override_colors/font_hover_color = Color(0.7, 0.7, 0.75, 1)
-theme_override_styles/normal = SubResource("StyleBoxFlat_8yv27")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_is0m3")
-theme_override_styles/hover = SubResource("StyleBoxFlat_is0m3")
+theme_override_styles/normal = SubResource("StyleBoxFlat_sf5nl")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_k1ias")
+theme_override_styles/hover = SubResource("StyleBoxFlat_k1ias")
 toggle_mode = true
 text = "Installed"
-icon = SubResource("DPITexture_pibxw")
+icon = SubResource("DPITexture_r141h")
 
 [node name="TabFavorites" type="Button" parent="VBox/TabsBar" unique_id=1204924171]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.5, 0.5, 0.55, 1)
 theme_override_colors/font_pressed_color = Color(0.6, 0.6, 0.65, 1)
 theme_override_colors/font_hover_color = Color(0.7, 0.7, 0.75, 1)
-theme_override_styles/normal = SubResource("StyleBoxFlat_qdo06")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_kj2cg")
-theme_override_styles/hover = SubResource("StyleBoxFlat_kj2cg")
+theme_override_styles/normal = SubResource("StyleBoxFlat_eg63y")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_t3tru")
+theme_override_styles/hover = SubResource("StyleBoxFlat_t3tru")
 toggle_mode = true
 text = "Favorites"
-icon = SubResource("DPITexture_c5i4a")
+icon = SubResource("DPITexture_jp55u")
 
 [node name="TabGlobalFolder" type="Button" parent="VBox/TabsBar" unique_id=1519984834]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.5, 0.5, 0.55, 1)
 theme_override_colors/font_pressed_color = Color(0.6, 0.6, 0.65, 1)
 theme_override_colors/font_hover_color = Color(0.7, 0.7, 0.75, 1)
-theme_override_styles/normal = SubResource("StyleBoxFlat_5lc0g")
-theme_override_styles/pressed = SubResource("StyleBoxFlat_3lpd2")
-theme_override_styles/hover = SubResource("StyleBoxFlat_3lpd2")
+theme_override_styles/normal = SubResource("StyleBoxFlat_y0q4s")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_8yx1p")
+theme_override_styles/hover = SubResource("StyleBoxFlat_8yx1p")
 toggle_mode = true
 text = "Global Folder"
-icon = SubResource("DPITexture_6wvnv")
+icon = SubResource("DPITexture_nqv2s")
 
 [node name="LeftSpacer" type="Control" parent="VBox/TabsBar" unique_id=1905122250]
 layout_mode = 2
 size_flags_horizontal = 3
 
 [node name="PageBar" type="HBoxContainer" parent="VBox/TabsBar" unique_id=1060664241]
+visible = false
 layout_mode = 2
 alignment = 1
 
@@ -383,19 +380,19 @@ size_flags_horizontal = 3
 layout_mode = 2
 tooltip_text = "Import asset from ZIP, folder, or GitHub"
 text = "Import..."
-icon = SubResource("DPITexture_f6oif")
+icon = SubResource("DPITexture_6fl3m")
 
 [node name="ExportBtn" type="Button" parent="VBox/TabsBar" unique_id=657929409]
 layout_mode = 2
 tooltip_text = "Export project or folder as .zip or .godotpackage"
 text = "Export..."
-icon = SubResource("DPITexture_4hpyn")
+icon = SubResource("DPITexture_yuir4")
 
 [node name="SettingsBtn" type="Button" parent="VBox/TabsBar" unique_id=1589061446]
 layout_mode = 2
 tooltip_text = "Open Asset Store settings"
 text = "Settings"
-icon = SubResource("DPITexture_ibd35")
+icon = SubResource("DPITexture_32p2u")
 
 [node name="TabsSeparator" type="HSeparator" parent="VBox" unique_id=342927062]
 layout_mode = 2
@@ -406,6 +403,7 @@ size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
 [node name="Grid" type="HFlowContainer" parent="VBox/Scroll" unique_id=2104455260]
+visible = false
 layout_mode = 2
 size_flags_horizontal = 3
 

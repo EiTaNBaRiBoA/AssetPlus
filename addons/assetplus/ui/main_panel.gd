@@ -13,6 +13,7 @@ const UpdateChecker = preload("res://addons/assetplus/ui/update_checker.gd")
 const UpdateDialog = preload("res://addons/assetplus/ui/update_dialog.gd")
 
 # Sources
+const SOURCE_HOME = "Home"
 const SOURCE_ALL = "All Sources"
 const SOURCE_GODOT = "Godot AssetLib"
 const SOURCE_GODOT_BETA = "Godot Store Beta"
@@ -25,9 +26,12 @@ const GODOT_API = "https://godotengine.org/asset-library/api"
 const GODOT_BETA_API = "https://store-beta.godotengine.org/api"
 const GODOT_SHADERS_URL = "https://godotshaders.com"
 const GODOT_BETA_DEFAULT_IMAGE = "https://store-beta.godotengine.org/static/images/share-image.webp"
+const GODOT_SHADERS_DEFAULT_IMAGE = "https://godotshaders.com/wp-content/themes/flavor/assets/images/logo-godotshaders.svg"
+const LIKES_API = "https://dry-boat-a316.moongdevstudio.workers.dev"
 
 const INSTALLED_REGISTRY_PATH = "user://asset_store_installed.cfg"
 const LINKUP_CACHE_PATH = "user://asset_store_linkup.cfg"
+const PENDING_DELETE_PATH = "user://assetplus_pending_delete.cfg"
 const DEFAULT_ICON_PATH = "res://addons/assetplus/defaultgodot.png"
 const ITEMS_PER_PAGE = 24
 const GLOBAL_FAVORITES_FOLDER = "GodotAssetPlus"
@@ -90,14 +94,24 @@ var _github_progress_label: Label
 
 var _page_buttons: Array[Button] = []
 
-# Card sizing
-const CARD_MIN_WIDTH = 300
-const CARD_MAX_WIDTH = 500
-const CARD_HEIGHT = 120
+# Card sizing (CLASSIC cards)
+const CARD_MIN_WIDTH = 390
+const CARD_MAX_WIDTH = 650
+const CARD_HEIGHT = 140
 const CARD_SPACING = 8
 
+# MODERN card sizing (Home view) - responsive based on panel width
+# Target: 5 cards visible at 1440p (~1100px panel), 4 cards at 1080p (~800px panel)
+const MODERN_CARD_BASE_WIDTH = 300  # Base width at 1440p
+const MODERN_CARD_MIN_WIDTH = 220   # Min width at smaller resolutions
+const MODERN_CARD_MAX_WIDTH = 350   # Max width at larger resolutions
+const MODERN_CARD_ASPECT = 0.96     # Height/Width ratio (288/300)
+const MODERN_CARD_SPACING = 16
+var _modern_card_size: Vector2 = Vector2(300, 288)  # Current calculated size
+var _first_resize_done: bool = false  # Track if we've had a valid resize
+
 # State
-var _current_source: String = SOURCE_GODOT
+var _current_source: String = SOURCE_GODOT_BETA
 var _current_page: int = 0
 var _total_pages: int = 1
 var _search_query: String = ""
@@ -108,6 +122,10 @@ var _http_requests: Array[HTTPRequest] = []
 var _pending_request_count: int = 0
 var _icon_cache: Dictionary = {}
 var _cards: Array = []
+# Icon loading queue to prevent UI freezes
+var _icon_queue: Array = []  # [{card: Control, url: String}]
+var _icon_loading_count: int = 0
+const ICON_MAX_CONCURRENT = 4  # Max simultaneous icon downloads
 var _linkup_cache: Dictionary = {}  # folder_name -> {matched: bool, asset_id: String, source: String, info: Dictionary}
 var _linkup_pending: Dictionary = {}  # folder_name -> true (for ongoing searches)
 var _session_installed_paths: Array[String] = []  # Paths installed during this session (may crash if deleted)
@@ -120,20 +138,135 @@ var _ignored_updates: Dictionary = {}  # asset_id -> version (ignored version st
 const UPDATE_CACHE_PATH = "user://asset_store_updates.cfg"
 const UPDATE_CACHE_TTL = 3600  # Cache updates for 1 hour (in seconds)
 
+# Likes system
+var _likes_cache: Dictionary = {}  # asset_id -> like_count (int)
+var _user_likes: Dictionary = {}  # asset_id -> true (user has liked this)
+var _device_hash: String = ""  # Unique device identifier for likes
+var _likes_http: HTTPRequest = null
+var _likes_queue: Array = []  # Queue of {action: "like"/"unlike", asset_id: String}
+var _likes_request_pending: bool = false  # True if a request is in progress
+var _syncing_likes: bool = false  # True during sync to avoid cache overwrites
+const LIKES_CACHE_PATH = "user://assetplus_likes_cache.cfg"
+const USER_LIKES_PATH = "user://assetplus_user_likes.cfg"
+const LIKES_CACHE_TTL = 3600  # Cache likes for 1 hour (in seconds)
+var _likes_last_batch_fetch: int = 0  # Timestamp of last batch fetch
+
 # Filters for Installed/Favorites tabs
 var _filter_selected_category: String = "All"
 var _filter_selected_source: String = "All"
 var _available_categories: Array[String] = []
 var _available_sources: Array[String] = []
 
+# Home page state
+var _home_container: VBoxContainer = null
+var _home_sections: Dictionary = {}  # category_slug -> {container: HBoxContainer, assets: Array}
+var _home_pending_requests: int = 0
+var _home_cache: Dictionary = {}  # source -> {section_key -> [assets]}
+const HOME_ASSETS_PER_SECTION = 10
+const HOME_CACHE_PATH = "user://assetplus_home_cache.cfg"
+const HOME_CACHE_TTL = 600  # Cache home page for 10 minutes
+
+# Guard against double initialization
+var _initialized: bool = false
+
+# "All Sources" mode buffer - collect results from all sources before displaying
+var _all_sources_buffer: Array[Dictionary] = []
+var _all_sources_pending: int = 0
+var _all_sources_sorted: Array[Dictionary] = []  # Sorted buffer for pagination
+
+# Categories per store for Home view
+const HOME_CATEGORIES_BETA = [
+	{"slug": "2d", "name": "2D", "display": "2D Assets"},
+	{"slug": "3d", "name": "3D", "display": "3D Assets"},
+	{"slug": "tool", "name": "Tool", "display": "Tools"},
+	{"slug": "audio", "name": "Audio", "display": "Audio"},
+	{"slug": "template", "name": "Template", "display": "Templates"},
+	{"slug": "materials", "name": "Materials", "display": "Materials"},
+	{"slug": "vfx", "name": "VFX", "display": "VFX & Particles"}
+]
+
+const HOME_CATEGORIES_ASSETLIB = [
+	{"id": "1", "name": "2D Tools", "display": "2D Tools"},
+	{"id": "2", "name": "3D Tools", "display": "3D Tools"},
+	{"id": "3", "name": "Shaders", "display": "Shaders"},
+	{"id": "4", "name": "Materials", "display": "Materials"},
+	{"id": "5", "name": "Tools", "display": "Tools"},
+	{"id": "6", "name": "Scripts", "display": "Scripts"},
+	{"id": "8", "name": "Templates", "display": "Templates"},
+	{"id": "10", "name": "Demos", "display": "Demos"}
+]
+
+const HOME_CATEGORIES_SHADERS = [
+	{"shader_type": "canvas_item", "name": "2D (Canvas Item)", "display": "2D Shaders"},
+	{"shader_type": "spatial", "name": "3D (Spatial)", "display": "3D Shaders"},
+	{"shader_type": "sky", "name": "Sky", "display": "Sky Shaders"},
+	{"shader_type": "particles", "name": "Particles", "display": "Particle Shaders"},
+	{"shader_type": "fog", "name": "Fog", "display": "Fog Shaders"}
+]
+
+
+func _calculate_modern_card_size() -> void:
+	## Calculate responsive MODERN card size based on editor window width
+	## Target: 5 cards at 1440p, 4 cards at 1080p, 3 cards at smaller
+
+	# Use DisplayServer to get the actual editor window size - always available
+	var window_size = DisplayServer.window_get_size()
+	var window_width = window_size.x
+
+	# Estimate panel width based on window width
+	# AssetPlus panel is roughly 45-55% of window width depending on layout
+	# At 1920px window -> ~1000px panel, at 2560px -> ~1300px panel
+	var panel_width = window_width * 0.50  # 50% of window width
+
+	# If scroll has a valid size, prefer that (more accurate)
+	if _assets_scroll and _assets_scroll.size.x > 100:
+		panel_width = _assets_scroll.size.x
+
+	# Account for margins (~50px total padding)
+	var available_width = panel_width - 50
+
+	# Target cards based on available width
+	var target_cards: float
+	if available_width >= 1000:
+		target_cards = 5.0
+	elif available_width >= 700:
+		target_cards = 4.0
+	else:
+		target_cards = 3.0
+
+	# Calculate card width: (available - spacing) / cards
+	var total_spacing = (target_cards - 1) * MODERN_CARD_SPACING
+	var card_width = (available_width - total_spacing) / target_cards
+
+	# Clamp to min/max
+	card_width = clamp(card_width, MODERN_CARD_MIN_WIDTH, MODERN_CARD_MAX_WIDTH)
+
+	# Calculate height based on aspect ratio
+	var card_height = card_width * MODERN_CARD_ASPECT
+
+	_modern_card_size = Vector2(card_width, card_height)
+	var scroll_width = _assets_scroll.size.x if _assets_scroll else -1
+	print("[AssetPlus] _calculate_modern_card_size: window=%d, scroll.x=%d, panel_width=%d, available=%d, card_size=%s" % [int(window_width), int(scroll_width), int(panel_width), int(available_width), _modern_card_size])
+
 
 func _ready() -> void:
+	# Guard against double initialization (can happen during plugin reload)
+	if _initialized:
+		SettingsDialog.debug_print("main_panel._ready() called but already initialized - skipping")
+		return
+	_initialized = true
+
 	SettingsDialog.debug_print("main_panel._ready() called")
 	_load_default_icon()
 	_load_favorites()
 	_load_installed_registry()
 	_load_linkup_cache()
 	_load_update_cache()
+	_init_likes_system()
+	# Process any pending deletions from previous session (GDExtension uninstalls)
+	_process_deferred_deletions()
+	# Load last selected source
+	_current_source = _load_last_source()
 	var recovered = _recover_pending_installation()  # Recover installations interrupted by script reload
 	SettingsDialog.debug_print("Recovery result: %s" % str(recovered))
 	_setup_ui()
@@ -148,11 +281,31 @@ func _ready() -> void:
 	# Check if this is first launch
 	call_deferred("_check_first_launch")
 	# Check for updates (after a short delay to not slow down startup)
-	get_tree().create_timer(2.0).timeout.connect(_check_for_updates)
+	# Use weakref to avoid errors if panel is freed before timer fires
+	var self_ref = weakref(self)
+	get_tree().create_timer(2.0).timeout.connect(func():
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._check_for_updates()
+	)
 	# Connect to filesystem changes to detect when plugins are moved/deleted
 	var fs = EditorInterface.get_resource_filesystem()
 	if fs:
 		fs.filesystem_changed.connect(_on_filesystem_changed)
+	# Connect to resize to fix first-launch sizing issue
+	resized.connect(_on_main_panel_resized)
+	# Check if a deferred filesystem scan is needed (after script reloads settle)
+	get_tree().create_timer(3.0).timeout.connect(func():
+		var panel2 = self_ref.get_ref()
+		if panel2:
+			panel2._check_deferred_scan_needed()
+	)
+
+
+func _on_main_panel_resized() -> void:
+	# Track when we get a valid resize (used by _show_home wait loop)
+	if not _first_resize_done and _assets_scroll and _assets_scroll.size.x > 0:
+		_first_resize_done = true
 
 
 func _load_default_icon() -> void:
@@ -204,13 +357,21 @@ func _setup_ui() -> void:
 	_category_filter.add_item("Demos")
 	_category_filter.item_selected.connect(_on_filter_changed)
 
-	# Setup source filter
+	# Setup source filter (Home view is default when no search query)
 	_source_filter.clear()
-	_source_filter.add_item(SOURCE_GODOT)
 	_source_filter.add_item(SOURCE_GODOT_BETA)
+	_source_filter.add_item(SOURCE_GODOT)
 	_source_filter.add_item(SOURCE_SHADERS)
 	_source_filter.add_item(SOURCE_ALL)
+	# Select the last used source
+	for i in range(_source_filter.item_count):
+		if _source_filter.get_item_text(i) == _current_source:
+			_source_filter.select(i)
+			break
 	_source_filter.item_selected.connect(_on_source_changed)
+
+	# Initialize filters for the current source (fixes sort options on first load)
+	_update_filters_for_source()
 
 	# Setup tabs
 	_tab_store.pressed.connect(func(): _switch_tab(Tab.STORE))
@@ -419,58 +580,77 @@ func _mark_onboarding_seen() -> void:
 		file.close()
 
 
+func _split_categories(category_str: String) -> Array:
+	## Split comma-separated categories into individual ones (e.g., "3D, 2D" -> ["3D", "2D"])
+	var result: Array = []
+	if category_str.is_empty():
+		return ["Unknown"]
+	var parts = category_str.split(",")
+	for part in parts:
+		var trimmed = part.strip_edges()
+		if not trimmed.is_empty():
+			result.append(trimmed)
+	return result if not result.is_empty() else ["Unknown"]
+
+
 func _update_filter_options() -> void:
-	# Collect all unique categories and sources from installed and favorites
+	# Collect unique categories and sources from CURRENT TAB ONLY
 	var categories_set: Dictionary = {}
 	var sources_set: Dictionary = {}
 
-	# From installed
-	for asset_id in _installed_registry:
-		var entry = _installed_registry[asset_id]
-		var info = entry.get("info", {})
-		var cat = info.get("category", "")
-		var source = info.get("source", "")
-		if cat.is_empty():
-			cat = "Unknown"
-		if source.is_empty():
-			source = "Unknown"
-		categories_set[cat] = true
-		sources_set[source] = true
+	match _current_tab:
+		Tab.INSTALLED:
+			# From installed only
+			for asset_id in _installed_registry:
+				var entry = _installed_registry[asset_id]
+				if entry is Dictionary and entry.get("pending_delete", false):
+					continue
+				var info = entry.get("info", {}) if entry is Dictionary else {}
+				var cat_str = info.get("category", "")
+				var source = info.get("source", "")
+				# Split comma-separated categories
+				for cat in _split_categories(cat_str):
+					categories_set[cat] = true
+				if source.is_empty():
+					source = "Unknown"
+				sources_set[source] = true
 
-	# From favorites
-	for fav in _favorites:
-		var cat = fav.get("category", "")
-		var source = fav.get("source", "")
-		if cat.is_empty():
-			cat = "Unknown"
-		if source.is_empty():
-			source = "Unknown"
-		categories_set[cat] = true
-		sources_set[source] = true
+		Tab.FAVORITES:
+			# From favorites only
+			for fav in _favorites:
+				var cat_str = fav.get("category", "")
+				var source = fav.get("source", "")
+				# Split comma-separated categories
+				for cat in _split_categories(cat_str):
+					categories_set[cat] = true
+				if source.is_empty():
+					source = "Unknown"
+				sources_set[source] = true
 
-	# From global folder packages (scan for categories and original sources)
-	var settings = SettingsDialog.get_settings()
-	var global_folder = settings.get("global_asset_folder", "")
-	if not global_folder.is_empty() and DirAccess.dir_exists_absolute(global_folder):
-		var dir = DirAccess.open(global_folder)
-		if dir:
-			dir.list_dir_begin()
-			var file_name = dir.get_next()
-			while file_name != "":
-				if not dir.current_is_dir() and file_name.get_extension().to_lower() == "godotpackage":
-					var full_path = global_folder.path_join(file_name)
-					var manifest = _read_godotpackage_manifest(full_path)
-					if not manifest.is_empty():
-						var cat = manifest.get("category", manifest.get("type", ""))
-						var source = manifest.get("original_source", "")
-						if cat.is_empty():
-							cat = "Unknown"
-						if source.is_empty():
-							source = "Unknown"
-						categories_set[cat] = true
-						sources_set[source] = true
-				file_name = dir.get_next()
-			dir.list_dir_end()
+		Tab.GLOBAL_FOLDER:
+			# From global folder packages only
+			var settings = SettingsDialog.get_settings()
+			var global_folder = settings.get("global_asset_folder", "")
+			if not global_folder.is_empty() and DirAccess.dir_exists_absolute(global_folder):
+				var dir = DirAccess.open(global_folder)
+				if dir:
+					dir.list_dir_begin()
+					var file_name = dir.get_next()
+					while file_name != "":
+						if not dir.current_is_dir() and file_name.get_extension().to_lower() == "godotpackage":
+							var full_path = global_folder.path_join(file_name)
+							var manifest = _read_godotpackage_manifest(full_path)
+							if not manifest.is_empty():
+								var cat_str = manifest.get("category", manifest.get("type", ""))
+								var source = manifest.get("original_source", "")
+								# Split comma-separated categories
+								for cat in _split_categories(cat_str):
+									categories_set[cat] = true
+								if source.is_empty():
+									source = "Unknown"
+								sources_set[source] = true
+						file_name = dir.get_next()
+					dir.list_dir_end()
 
 	# Build sorted arrays
 	_available_categories = ["All"]
@@ -1628,6 +1808,16 @@ func _on_search_submitted(query: String) -> void:
 func _on_source_changed(index: int) -> void:
 	_current_source = _source_filter.get_item_text(index)
 	_current_page = 0
+
+	# Reset search when changing source to show Home view
+	_search_query = ""
+	_search_edit.text = ""
+
+	# Save last selected source to settings
+	_save_last_source(_current_source)
+
+	# Update filter visibility based on Home state
+	_update_tab_buttons()
 	_update_filters_for_source()
 	_search_assets()
 
@@ -1636,6 +1826,9 @@ func _switch_tab(tab: Tab) -> void:
 	_current_tab = tab
 	_current_page = 0
 	_update_tab_buttons()
+
+	# Clear icon queue to prevent lambda errors on freed cards
+	_icon_queue.clear()
 
 	# Clear search when switching tabs
 	_search_edit.text = ""
@@ -1646,6 +1839,9 @@ func _switch_tab(tab: Tab) -> void:
 		_needs_filesystem_refresh = false
 		SettingsDialog.debug_print_verbose("Processing deferred filesystem changes on tab switch")
 		_cleanup_installed_registry()
+
+	# Fetch latest likes when switching tabs (for real-time updates)
+	_fetch_all_likes()
 
 	_refresh_content()
 
@@ -1664,17 +1860,20 @@ func _update_tab_buttons() -> void:
 
 	# Show/hide store filters and pagination based on tab
 	var show_store_filters = _current_tab == Tab.STORE
+	# Home view is shown when no search query (and not All Sources)
+	var is_home_view = _search_query.is_empty() and _current_source != SOURCE_ALL
+	# Category and sort filters are always visible on Store tab (for quick filtering from Home)
 	_sort_filter.visible = show_store_filters
 	_category_filter.visible = show_store_filters
 	_source_filter.visible = show_store_filters
-	# Also hide labels
+	# Also show/hide labels
 	var top_bar = $VBox/TopBar
 	top_bar.get_node("SortLabel").visible = show_store_filters
 	top_bar.get_node("CatLabel").visible = show_store_filters
 	top_bar.get_node("SiteLabel").visible = show_store_filters
 
-	# Only show pagination for Store tab
-	_page_bar.visible = _current_tab == Tab.STORE
+	# Only show pagination for Store tab (not in Home view)
+	_page_bar.visible = _current_tab == Tab.STORE and not is_home_view
 
 	# Show/hide local filters for Installed/Favorites/Global Folder tabs (in TopBar)
 	var show_local_filters = _current_tab in [Tab.INSTALLED, Tab.FAVORITES, Tab.GLOBAL_FOLDER]
@@ -1768,11 +1967,11 @@ func _update_filters_for_source() -> void:
 		_category_filter.add_item("Materials")
 		_category_filter.add_item("VFX")
 
-		# Sort options matching Beta Store API
+		# Sort options for Beta Store
 		_sort_filter.clear()
 		_sort_filter.add_item("Recently Updated")
 		_sort_filter.add_item("Relevance")
-		_sort_filter.add_item("Top Rated")
+		_sort_filter.add_item("Most Liked")
 	else:
 		# AssetLib categories (including Templates, Projects, Demos)
 		# Category IDs: 1=2D Tools, 2=3D Tools, 3=Shaders, 4=Materials, 5=Tools, 6=Scripts, 7=Misc, 8=Templates, 9=Projects, 10=Demos
@@ -1788,34 +1987,67 @@ func _update_filters_for_source() -> void:
 		_category_filter.add_item("Projects")
 		_category_filter.add_item("Demos")
 
-		# Default sort options
+		# Default sort options for AssetLib
 		_sort_filter.clear()
 		_sort_filter.add_item("Recently Updated")
 		_sort_filter.add_item("Name")
-		_sort_filter.add_item("Rating")
+		_sort_filter.add_item("Most Liked")
 
 
 func _on_filter_changed(_index: int) -> void:
 	_current_page = 0
+	# Update sort options based on category (hide Relevance when category is "All")
+	_update_sort_options_for_category()
 	_search_assets()
+
+
+func _update_sort_options_for_category() -> void:
+	## Update sort filter options based on current category selection
+	## Hides "Relevance" when category is "All" (Home page mode)
+	var selected_category = _category_filter.get_item_text(_category_filter.selected) if _category_filter.item_count > 0 else "All"
+	var current_sort = _sort_filter.get_item_text(_sort_filter.selected) if _sort_filter.item_count > 0 else ""
+
+	# Only update for sources that have Relevance option
+	if _current_source == SOURCE_GODOT_BETA:
+		_sort_filter.clear()
+		_sort_filter.add_item("Recently Updated")
+		if selected_category != "All":
+			_sort_filter.add_item("Relevance")
+		_sort_filter.add_item("Most Liked")
+		# Restore previous selection if possible
+		for i in range(_sort_filter.item_count):
+			if _sort_filter.get_item_text(i) == current_sort:
+				_sort_filter.select(i)
+				return
+		# Default to first item if previous selection not found
+		_sort_filter.select(0)
 
 
 func _on_prev_page() -> void:
 	if _current_page > 0:
-		_current_page -= 1
-		_search_assets()
+		_go_to_page(_current_page - 1)
 
 
 func _on_next_page() -> void:
 	if _current_page < _total_pages - 1:
-		_current_page += 1
-		_search_assets()
+		_go_to_page(_current_page + 1)
 
 
 func _go_to_page(page: int) -> void:
 	if page >= 0 and page < _total_pages:
 		_current_page = page
-		_search_assets()
+		# In "All Sources" mode, use cached results instead of refetching
+		if _current_source == SOURCE_ALL and _all_sources_sorted.size() > 0:
+			# Clear current display
+			for child in _assets_grid.get_children():
+				child.queue_free()
+			_cards.clear()
+			_assets.clear()
+			# Display the requested page from sorted buffer
+			_display_all_sources_page()
+			_update_pagination()
+		else:
+			_search_assets()
 
 
 func _search_assets() -> void:
@@ -1823,8 +2055,13 @@ func _search_assets() -> void:
 	for child in _assets_grid.get_children():
 		child.queue_free()
 	_cards.clear()
+	_icon_queue.clear()  # Clear pending icon downloads to prevent lambda errors
+
+	_clear_home_container()
 
 	_assets.clear()
+	_all_sources_buffer.clear()
+	_all_sources_sorted.clear()
 	_loading_label.text = "Loading..."
 	_loading_label.visible = true
 	_total_pages = 1
@@ -1836,6 +2073,31 @@ func _search_assets() -> void:
 			req.queue_free()
 	_http_requests.clear()
 	_pending_request_count = 0
+
+	# Show Home page if no search query, not "All Sources", and category is "All"
+	var selected_category = _category_filter.get_item_text(_category_filter.selected) if _category_filter.item_count > 0 else "All"
+	var show_home = _search_query.is_empty() and _current_source != SOURCE_ALL and selected_category == "All"
+	print("[AssetPlus] _search_assets: query='%s', source='%s', category='%s', show_home=%s" % [_search_query, _current_source, selected_category, show_home])
+	if show_home:
+		_show_home()
+		return
+
+	# Make sure grid is visible when searching
+	_assets_grid.visible = true
+
+	# Check if "Most Liked" sort is selected
+	var sort_text = _sort_filter.get_item_text(_sort_filter.selected) if _sort_filter.item_count > 0 else ""
+	# Use our unified Most Liked system for AssetLib and Store Beta only
+	# Shaders uses its native API with orderby=likes (better data, less load on our server)
+	if sort_text == "Most Liked" and _current_source != SOURCE_ALL and _current_source != SOURCE_SHADERS:
+		_pending_request_count += 1
+		_fetch_most_liked_assets()
+		return
+
+	# Initialize "All Sources" buffer if needed
+	if _current_source == SOURCE_ALL:
+		_all_sources_buffer.clear()
+		_all_sources_pending = 3  # Godot, Beta, Shaders
 
 	# Fetch from sources based on filter
 	if _current_source == SOURCE_ALL or _current_source == SOURCE_GODOT:
@@ -1859,11 +2121,1161 @@ func _check_no_results() -> void:
 		_loading_label.visible = true
 
 
+func _clear_home_container() -> void:
+	## Clear the home container and its parent MarginContainer
+	# First stop all shimmer tweens
+	for section_key in _home_sections:
+		var section_data = _home_sections[section_key]
+		var skeletons = section_data.get("skeletons", [])
+		for skeleton in skeletons:
+			if is_instance_valid(skeleton) and skeleton.has_meta("shimmer_tween"):
+				var tween = skeleton.get_meta("shimmer_tween")
+				if tween and tween.is_valid():
+					tween.kill()
+
+	if _home_container and is_instance_valid(_home_container):
+		var parent = _home_container.get_parent()
+		if parent and parent.name == "HomeMargin":
+			# Use free() instead of queue_free() to immediately remove
+			parent.free()
+		else:
+			_home_container.free()
+		_home_container = null
+	_home_sections.clear()
+
+	# Also clean up any orphaned HomeMargin containers in the scroll
+	if _assets_scroll:
+		var children_to_free: Array = []
+		for child in _assets_scroll.get_children():
+			if child.name == "HomeMargin" or child.name.begins_with("HomeMargin"):
+				children_to_free.append(child)
+		for child in children_to_free:
+			child.free()
+
+
+func _get_home_categories() -> Array:
+	## Get the categories array for the current source
+	match _current_source:
+		SOURCE_GODOT_BETA:
+			return HOME_CATEGORIES_BETA
+		SOURCE_GODOT:
+			return HOME_CATEGORIES_ASSETLIB
+		SOURCE_SHADERS:
+			return HOME_CATEGORIES_SHADERS
+		_:
+			return HOME_CATEGORIES_BETA
+
+
+func _get_store_logo_path() -> String:
+	## Get the logo path for the current source
+	match _current_source:
+		SOURCE_GODOT_BETA:
+			return "res://addons/assetplus/assetstorelogo.png"
+		SOURCE_GODOT:
+			return "res://addons/assetplus/assetlibarrygodot.png"
+		SOURCE_SHADERS:
+			return "res://addons/assetplus/assetgodotshaders.png"
+		_:
+			return "res://addons/assetplus/assetstorelogo.png"
+
+
+func _add_store_logo() -> void:
+	## Add the store logo at the top of the home page (left-aligned)
+	var logo_path = _get_store_logo_path()
+	var logo_texture = load(logo_path) as Texture2D
+	if not logo_texture:
+		return
+
+	# Logo image - use texture's natural size scaled to fit height
+	var logo = TextureRect.new()
+	logo.texture = logo_texture
+	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	logo.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN  # Align left
+	# Calculate width based on aspect ratio for 80px height
+	var aspect = float(logo_texture.get_width()) / float(logo_texture.get_height())
+	var target_height = 80.0
+	logo.custom_minimum_size = Vector2(target_height * aspect, target_height)
+	_home_container.add_child(logo)
+
+
+func _show_home() -> void:
+	## Display the Home page with horizontal scrolling sections by category
+	_loading_label.text = "Loading..."
+	_loading_label.visible = true
+
+	# Calculate responsive card sizes based on editor window width
+	# Uses DisplayServer.window_get_size() which is always available
+	_calculate_modern_card_size()
+
+	# Hide the regular grid
+	_assets_grid.visible = false
+
+	# Create home container inside scroll (using MarginContainer for padding)
+	var margin = MarginContainer.new()
+	margin.name = "HomeMargin"
+	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	margin.mouse_filter = Control.MOUSE_FILTER_PASS
+	margin.add_theme_constant_override("margin_top", 16)
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_bottom", 16)
+	_assets_scroll.add_child(margin)
+
+	_home_container = VBoxContainer.new()
+	_home_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_home_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_home_container.mouse_filter = Control.MOUSE_FILTER_PASS
+	_home_container.add_theme_constant_override("separation", 28)
+	margin.add_child(_home_container)
+
+	# Add store logo at the top
+	_add_store_logo()
+
+	# Get categories for current source
+	var categories = _get_home_categories()
+
+	# Load cached home data for instant display
+	var cached_data = _load_home_cache(_current_source)
+	var has_cache = not cached_data.is_empty()
+
+	# Check if "Most Liked" sort is selected
+	var sort_text = _sort_filter.get_item_text(_sort_filter.selected) if _sort_filter.item_count > 0 else ""
+	var use_most_liked = (sort_text == "Most Liked")
+
+	# Create sections for each category
+	_home_pending_requests = categories.size()
+
+	# First pass: create all sections and display cached data
+	for cat_info in categories:
+		var section_key = cat_info.get("slug", cat_info.get("shader_type", cat_info.get("id", "")))
+		_create_home_section(cat_info)
+
+		# If we have cached data for this section, display it immediately (only for Most Recent mode)
+		if not use_most_liked and has_cache and cached_data.has(section_key):
+			var cached_assets = cached_data[section_key]
+			if not cached_assets.is_empty():
+				_display_cached_home_section(section_key, cached_assets)
+
+	# Second pass: fetch data with priority (first 3 categories immediately, rest deferred)
+	const PRIORITY_COUNT = 3
+	for i in range(categories.size()):
+		var cat_info = categories[i]
+		if i < PRIORITY_COUNT:
+			# Fetch first 3 categories immediately (visible on screen)
+			if use_most_liked and _current_source != SOURCE_SHADERS:
+				_fetch_home_section_most_liked(cat_info)
+			else:
+				_fetch_home_section(cat_info, use_most_liked)
+		else:
+			# Defer remaining categories to avoid overwhelming the UI
+			var deferred_cat = cat_info
+			var deferred_most_liked = use_most_liked
+			var self_ref = weakref(self)
+			get_tree().create_timer(0.1 * (i - PRIORITY_COUNT + 1)).timeout.connect(func():
+				var panel = self_ref.get_ref()
+				if not panel:
+					return
+				if deferred_most_liked and panel._current_source != SOURCE_SHADERS:
+					panel._fetch_home_section_most_liked(deferred_cat)
+				else:
+					panel._fetch_home_section(deferred_cat, deferred_most_liked)
+			)
+
+	if has_cache:
+		_loading_label.visible = false
+
+
+func _create_home_section(cat_info: Dictionary) -> void:
+	## Create UI structure for a home section
+	var section = VBoxContainer.new()
+	section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	section.add_theme_constant_override("separation", 8)
+	_home_container.add_child(section)
+
+	# Get section key (slug for Beta, shader_type for Shaders, id for AssetLib)
+	var section_key = cat_info.get("slug", cat_info.get("shader_type", cat_info.get("id", "")))
+
+	# Header with category title and "See All" button
+	var header = HBoxContainer.new()
+	header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	section.add_child(header)
+
+	var title_btn = Button.new()
+	# Add sort suffix based on current sort filter selection
+	var sort_suffix = ""
+	if _sort_filter.item_count > 0:
+		var sort_text = _sort_filter.get_item_text(_sort_filter.selected)
+		if sort_text == "Most Liked":
+			sort_suffix = " - Most Liked"
+		elif sort_text in ["Recently Updated", "Newest"]:
+			sort_suffix = " - Most Recent"
+	title_btn.text = cat_info.display + sort_suffix + " →"
+	title_btn.flat = true
+	title_btn.add_theme_font_size_override("font_size", 22)
+	var editor_theme = EditorInterface.get_editor_theme() if Engine.is_editor_hint() else null
+	if editor_theme and editor_theme.has_font("bold", "EditorFonts"):
+		title_btn.add_theme_font_override("font", editor_theme.get_font("bold", "EditorFonts"))
+	title_btn.add_theme_color_override("font_color", Color(0.9, 0.9, 0.95))
+	title_btn.add_theme_color_override("font_hover_color", Color(0.6, 0.8, 1.0))
+	title_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	var cat_name = cat_info.name
+	title_btn.pressed.connect(func(): _on_home_category_clicked(cat_name))
+	header.add_child(title_btn)
+
+	var spacer = Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(spacer)
+
+	# Scroll arrows
+	var left_btn = Button.new()
+	left_btn.text = "◀"
+	left_btn.flat = true
+	left_btn.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	left_btn.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	header.add_child(left_btn)
+
+	var right_btn = Button.new()
+	right_btn.text = "▶"
+	right_btn.flat = true
+	right_btn.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	right_btn.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	header.add_child(right_btn)
+
+	# Clip container to hide overflow (no scroll interaction)
+	# Height based on responsive card size + padding
+	var clip = Control.new()
+	clip.clip_contents = true
+	clip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	clip.custom_minimum_size.y = _modern_card_size.y + 10
+	section.add_child(clip)
+
+	# Cards container with some padding - positioned inside clip
+	var cards_hbox = HBoxContainer.new()
+	cards_hbox.add_theme_constant_override("separation", MODERN_CARD_SPACING)
+	cards_hbox.position = Vector2.ZERO
+	# Fixed height, don't expand horizontally to prevent child resizing
+	cards_hbox.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	cards_hbox.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	cards_hbox.custom_minimum_size.y = _modern_card_size.y + 10
+	# Prevent HBoxContainer from expanding children
+	cards_hbox.alignment = BoxContainer.ALIGNMENT_BEGIN
+	clip.add_child(cards_hbox)
+
+	# Connect scroll buttons (animate cards_hbox position)
+	left_btn.pressed.connect(func(): _home_scroll_hbox(cards_hbox, clip, -1))
+	right_btn.pressed.connect(func(): _home_scroll_hbox(cards_hbox, clip, 1))
+
+	# Store reference (use section_key from above)
+	_home_sections[section_key] = {
+		"container": cards_hbox,
+		"clip": clip,
+		"assets": [],
+		"skeletons": []
+	}
+
+	# Add skeleton placeholder cards while loading
+	_add_skeleton_cards(cards_hbox, section_key, 5)
+
+
+func _add_skeleton_cards(container: HBoxContainer, section_key: String, count: int) -> void:
+	## Add skeleton placeholder cards to a section while loading
+	var skeletons: Array = []
+	for i in range(count):
+		var skeleton = _create_skeleton_card()
+		container.add_child(skeleton)
+		skeletons.append(skeleton)
+
+	# Update container width based on responsive card size
+	var card_width = int(_modern_card_size.x)
+	var total_width = count * card_width + (count - 1) * MODERN_CARD_SPACING
+	container.custom_minimum_size.x = total_width
+
+	# Store skeletons reference
+	if _home_sections.has(section_key):
+		_home_sections[section_key].skeletons = skeletons
+
+
+func _create_skeleton_card() -> Panel:
+	## Create a skeleton placeholder card with shimmer animation (responsive size)
+	var card_w = int(_modern_card_size.x)
+	var card_h = int(_modern_card_size.y)
+
+	var card = Panel.new()
+	card.custom_minimum_size = _modern_card_size
+	card.size = _modern_card_size
+	card.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	card.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+
+	# Style with dark background and rounded corners
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0.16, 0.16, 0.18)
+	style.set_corner_radius_all(10)
+	style.set_border_width_all(1)
+	style.border_color = Color(0.22, 0.22, 0.25)
+	card.add_theme_stylebox_override("panel", style)
+
+	# Image placeholder at top (~73% of height like MODERN cards)
+	var img_height = int(card_h * 0.68)
+	var img_placeholder = Panel.new()
+	img_placeholder.position = Vector2(1, 1)
+	img_placeholder.size = Vector2(card_w - 2, img_height - 2)
+	var img_style = StyleBoxFlat.new()
+	img_style.bg_color = Color(0.2, 0.2, 0.25)
+	img_style.corner_radius_top_left = 9
+	img_style.corner_radius_top_right = 9
+	img_placeholder.add_theme_stylebox_override("panel", img_style)
+	card.add_child(img_placeholder)
+
+	# Title placeholder (below image)
+	var title_y = img_height + 12
+	var title_placeholder = Panel.new()
+	title_placeholder.position = Vector2(12, title_y)
+	title_placeholder.size = Vector2(card_w * 0.67, 16)  # ~67% width for title
+	var title_style = StyleBoxFlat.new()
+	title_style.bg_color = Color(0.25, 0.25, 0.3)
+	title_style.set_corner_radius_all(4)
+	title_placeholder.add_theme_stylebox_override("panel", title_style)
+	card.add_child(title_placeholder)
+
+	# Author placeholder
+	var author_y = title_y + 26
+	var author_placeholder = Panel.new()
+	author_placeholder.position = Vector2(12, author_y)
+	author_placeholder.size = Vector2(card_w * 0.4, 12)  # ~40% width for author
+	var author_style = StyleBoxFlat.new()
+	author_style.bg_color = Color(0.22, 0.22, 0.27)
+	author_style.set_corner_radius_all(3)
+	author_placeholder.add_theme_stylebox_override("panel", author_style)
+	card.add_child(author_placeholder)
+
+	# Shimmer animation on image placeholder
+	var tween = create_tween()
+	tween.set_loops()
+	tween.tween_property(img_style, "bg_color", Color(0.28, 0.28, 0.33), 0.6).set_trans(Tween.TRANS_SINE)
+	tween.tween_property(img_style, "bg_color", Color(0.2, 0.2, 0.25), 0.6).set_trans(Tween.TRANS_SINE)
+
+	# Store tween reference on card for cleanup
+	card.set_meta("shimmer_tween", tween)
+
+	return card
+
+
+func _remove_skeleton_cards(section_key: String) -> void:
+	## Remove skeleton cards from a section
+	if not _home_sections.has(section_key):
+		return
+
+	var section_data = _home_sections[section_key]
+	var skeletons = section_data.get("skeletons", [])
+
+	for skeleton in skeletons:
+		if is_instance_valid(skeleton):
+			# Stop shimmer tween
+			var tween = skeleton.get_meta("shimmer_tween") if skeleton.has_meta("shimmer_tween") else null
+			if tween and tween.is_valid():
+				tween.kill()
+			skeleton.queue_free()
+
+	section_data.skeletons = []
+
+
+func _home_scroll_hbox(hbox: HBoxContainer, clip: Control, direction: int) -> void:
+	## Scroll a home section left or right by moving the HBoxContainer position
+	# Use responsive card size for scroll amount (scroll 2 cards at a time)
+	var card_width = int(_modern_card_size.x)
+	var scroll_amount = (card_width + MODERN_CARD_SPACING) * 2
+	var current_x = hbox.position.x
+	var target_x = current_x - (direction * scroll_amount)
+
+	# Calculate content width based on number of children and responsive size
+	var child_count = hbox.get_child_count()
+	var content_width = child_count * card_width + max(0, child_count - 1) * MODERN_CARD_SPACING
+
+	# Calculate max scroll (how far left we can go)
+	# Only scroll if content is wider than clip
+	var max_scroll = max(0, content_width - clip.size.x)
+	target_x = clamp(target_x, -max_scroll, 0)
+
+	var tween = create_tween()
+	tween.tween_property(hbox, "position:x", target_x, 0.3).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+
+
+func _load_home_cache(source: String) -> Dictionary:
+	## Load cached home page data for a source
+	var config = ConfigFile.new()
+	if config.load(HOME_CACHE_PATH) != OK:
+		return {}
+
+	var cache_time = config.get_value(source, "timestamp", 0)
+	var current_time = int(Time.get_unix_time_from_system())
+
+	# Check if cache is still valid
+	if current_time - cache_time > HOME_CACHE_TTL:
+		return {}
+
+	var data = config.get_value(source, "sections", {})
+	if data is Dictionary:
+		return data
+	return {}
+
+
+func _save_home_cache(source: String, section_key: String, assets: Array) -> void:
+	## Save home page section data to cache
+	var config = ConfigFile.new()
+	config.load(HOME_CACHE_PATH)  # Load existing, ignore errors
+
+	# Get existing sections for this source or create new
+	var sections = config.get_value(source, "sections", {})
+	if not sections is Dictionary:
+		sections = {}
+
+	# Store minimal asset data to reduce cache size
+	var minimal_assets = []
+	for asset in assets:
+		minimal_assets.append({
+			"asset_id": asset.get("asset_id", ""),
+			"title": asset.get("title", ""),
+			"author": asset.get("author", ""),
+			"category": asset.get("category", ""),
+			"icon_url": asset.get("icon_url", ""),
+			"browse_url": asset.get("browse_url", ""),
+			"source": asset.get("source", ""),
+			"description": asset.get("description", "").substr(0, 200),  # Truncate description
+			"version": asset.get("version", ""),
+			"license": asset.get("license", ""),
+			"cost": asset.get("cost", "Free")
+		})
+
+	sections[section_key] = minimal_assets
+	config.set_value(source, "sections", sections)
+	config.set_value(source, "timestamp", int(Time.get_unix_time_from_system()))
+	config.save(HOME_CACHE_PATH)
+
+
+func _display_cached_home_section(section_key: String, cached_assets: Array) -> void:
+	## Display cached assets in a home section (instant load)
+	if not _home_sections.has(section_key):
+		return
+
+	var section_data = _home_sections[section_key]
+	var container: HBoxContainer = section_data.container
+
+	# Remove skeleton cards
+	_remove_skeleton_cards(section_key)
+
+	# Create cards from cached data
+	for asset_data in cached_assets:
+		var is_fav = _is_favorite(asset_data)
+		var is_inst = _is_addon_installed(asset_data.get("asset_id", ""))
+
+		var card = AssetCard.new()
+		card.set_card_type(AssetCard.CardType.MODERN, _modern_card_size)
+		card.setup(asset_data, is_fav, is_inst)
+		card.clicked.connect(_on_asset_clicked)
+		card.favorite_clicked.connect(_on_favorite_clicked)
+		container.add_child(card)
+		_cards.append(card)
+
+		# Initialize likes
+		var asset_id = asset_data.get("asset_id", "")
+		card.set_always_show_count(true)
+		if not asset_id.is_empty():
+			card.set_like_count(get_like_count(asset_id))
+			card.set_liked(is_fav)
+
+		# Load icon
+		var icon_url = asset_data.get("icon_url", "")
+		if not icon_url.is_empty():
+			_load_icon(card, icon_url)
+		elif _default_icon:
+			card.set_icon(_default_icon)
+
+	section_data.assets = cached_assets
+
+
+func _fetch_home_section(cat_info: Dictionary, use_most_liked: bool = false) -> void:
+	## Fetch assets for a specific home section based on current source
+	## If use_most_liked is true and source supports it (Shaders), use likes ordering
+	var http = HTTPRequest.new()
+	add_child(http)
+	_http_requests.append(http)
+
+	var url: String
+	var section_key: String  # Key for _home_sections lookup
+
+	match _current_source:
+		SOURCE_GODOT_BETA:
+			var query = "#%s" % cat_info.slug
+			url = "https://store-beta.godotengine.org/api/v1/search/query/?query=%s&sort=updated_desc&batch_size=%d&page=1" % [query.uri_encode(), HOME_ASSETS_PER_SECTION]
+			section_key = cat_info.slug
+		SOURCE_GODOT:
+			# AssetLib uses category IDs and requires godot_version
+			var engine_version = Engine.get_version_info()
+			var godot_ver = "%d.9" % engine_version.get("major", 4)
+			url = "%s/asset?godot_version=%s&category=%s&max_results=%d&page=0&sort=updated" % [GODOT_API, godot_ver, cat_info.id, HOME_ASSETS_PER_SECTION]
+			# Templates (8), Projects (9), Demos (10) require type=any
+			if cat_info.id in ["8", "9", "10"]:
+				url += "&type=any"
+			section_key = cat_info.id
+		SOURCE_SHADERS:
+			# Godot Shaders uses shader_type parameter
+			# Use orderby=likes if Most Liked is selected, otherwise orderby=date
+			var orderby = "likes" if use_most_liked else "date"
+			url = "https://godotshaders.com/wp-json/gds/v1/shaders?per_page=%d&shader_type=%s&orderby=%s&order=DESC" % [HOME_ASSETS_PER_SECTION, cat_info.shader_type, orderby]
+			section_key = cat_info.shader_type
+		_:
+			return
+
+	SettingsDialog.debug_print("Fetching Home section: %s for %s" % [cat_info.display, _current_source])
+
+	var source = _current_source
+	var self_ref = weakref(self)
+	http.request_completed.connect(func(result, code, headers, body):
+		http.queue_free()
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._http_requests.erase(http)
+			panel._on_home_section_response(result, code, body, section_key, source)
+	)
+	http.request(url)
+
+
+func _fetch_home_section_most_liked(cat_info: Dictionary) -> void:
+	## Fetch most liked assets for a specific home section from our likes API
+	var http = HTTPRequest.new()
+	add_child(http)
+	_http_requests.append(http)
+
+	# Get section key
+	var section_key = cat_info.get("slug", cat_info.get("shader_type", cat_info.get("id", "")))
+
+	# Determine source name for API
+	var source_slug = _source_to_slug(_current_source)
+
+	# Map category to API slug
+	var category_slug = ""
+	match _current_source:
+		SOURCE_GODOT_BETA:
+			category_slug = cat_info.get("slug", "")
+		SOURCE_GODOT:
+			# AssetLib uses display name, convert to slug
+			category_slug = _to_slug(cat_info.get("display", ""))
+		SOURCE_SHADERS:
+			# Map shader_type to category slug
+			match cat_info.get("shader_type", ""):
+				"canvas_item":
+					category_slug = "canvas_item"
+				"spatial":
+					category_slug = "spatial"
+				"sky":
+					category_slug = "sky"
+				"particles":
+					category_slug = "particles"
+				"fog":
+					category_slug = "fog"
+				_:
+					category_slug = cat_info.get("shader_type", "")
+
+	# Build URL
+	var url = LIKES_API + "/likes/top?source=%s&category=%s&limit=%d" % [
+		source_slug.uri_encode(),
+		category_slug.uri_encode(),
+		HOME_ASSETS_PER_SECTION
+	]
+
+	SettingsDialog.debug_print("Fetching Home Most Liked section: %s from %s" % [cat_info.display, url])
+
+	var source = _current_source
+	var self_ref = weakref(self)
+	http.request_completed.connect(func(result, code, headers, body):
+		http.queue_free()
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._http_requests.erase(http)
+			panel._on_home_most_liked_response(result, code, body, section_key, cat_info, source)
+	)
+	http.request(url)
+
+
+func _on_home_most_liked_response(result: int, code: int, body: PackedByteArray, section_key: String, cat_info: Dictionary, source: String) -> void:
+	## Handle response from /likes/top API for home section
+	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+		SettingsDialog.debug_print("Home Most Liked section %s: HTTP error %d" % [section_key, code])
+		_home_pending_requests -= 1
+		if _home_pending_requests <= 0:
+			_loading_label.visible = false
+		_remove_skeleton_cards(section_key)
+		return
+
+	var json = JSON.new()
+	if json.parse(body.get_string_from_utf8()) != OK:
+		SettingsDialog.debug_print("Home Most Liked section %s: JSON parse error" % section_key)
+		_home_pending_requests -= 1
+		if _home_pending_requests <= 0:
+			_loading_label.visible = false
+		_remove_skeleton_cards(section_key)
+		return
+
+	var data = json.data
+	if not data is Array or data.is_empty():
+		SettingsDialog.debug_print("Home Most Liked section %s: No liked assets found" % section_key)
+		_home_pending_requests -= 1
+		if _home_pending_requests <= 0:
+			_loading_label.visible = false
+		_remove_skeleton_cards(section_key)
+		return
+
+	SettingsDialog.debug_print("Home Most Liked section %s: received %d asset IDs" % [section_key, data.size()])
+
+	# Store asset IDs for this section
+	var asset_ids: Array = []
+	for item in data:
+		if item is Dictionary and item.has("id"):
+			asset_ids.append(item.get("id", ""))
+
+	# Fetch details for each asset
+	_fetch_home_most_liked_details(section_key, asset_ids, cat_info, source)
+
+
+# Track pending Most Liked detail requests per section
+var _home_most_liked_pending: Dictionary = {}  # section_key -> pending count
+var _home_most_liked_assets: Dictionary = {}  # section_key -> collected assets
+
+func _fetch_home_most_liked_details(section_key: String, asset_ids: Array, cat_info: Dictionary, source: String) -> void:
+	## Fetch details for each asset ID from the source API
+	if asset_ids.is_empty():
+		_home_pending_requests -= 1
+		if _home_pending_requests <= 0:
+			_loading_label.visible = false
+		_remove_skeleton_cards(section_key)
+		return
+
+	_home_most_liked_pending[section_key] = asset_ids.size()
+	_home_most_liked_assets[section_key] = []
+
+	for asset_id in asset_ids:
+		var http = HTTPRequest.new()
+		add_child(http)
+		_http_requests.append(http)
+
+		var url = ""
+		match source:
+			SOURCE_GODOT:
+				url = "%s/asset/%s" % [GODOT_API, asset_id]
+			SOURCE_GODOT_BETA:
+				url = "https://store-beta.godotengine.org/api/v1/assets/%s/" % asset_id
+			SOURCE_SHADERS:
+				var slug = asset_id.replace("shader-", "")
+				url = "https://godotshaders.com/shader/%s/" % slug
+			_:
+				_home_most_liked_pending[section_key] -= 1
+				http.queue_free()
+				continue
+
+		var self_ref = weakref(self)
+		http.request_completed.connect(func(result, code, headers, body):
+			http.queue_free()
+			var panel = self_ref.get_ref()
+			if panel:
+				panel._http_requests.erase(http)
+				panel._on_home_most_liked_detail_response(result, code, body, asset_id, section_key, cat_info, source)
+		)
+		http.request(url)
+
+
+func _on_home_most_liked_detail_response(result: int, code: int, body: PackedByteArray, asset_id: String, section_key: String, cat_info: Dictionary, source: String) -> void:
+	## Handle individual asset detail response for home Most Liked section
+	_home_most_liked_pending[section_key] -= 1
+
+	if result == HTTPRequest.RESULT_SUCCESS and code == 200:
+		var body_text = body.get_string_from_utf8()
+		var info: Dictionary = {}
+
+		match source:
+			SOURCE_GODOT:
+				var json = JSON.new()
+				if json.parse(body_text) == OK and json.data is Dictionary:
+					var item = json.data
+					var category_id = str(item.get("category_id", "5"))
+					var category_map = {
+						"1": "2D Tools", "2": "3D Tools", "3": "Shaders", "4": "Materials",
+						"5": "Tools", "6": "Scripts", "7": "Misc", "8": "Templates", "9": "Projects", "10": "Demos"
+					}
+					var category_name = category_map.get(category_id, "Tools")
+					info = {
+						"source": SOURCE_GODOT,
+						"asset_id": asset_id,
+						"title": item.get("title", "Unknown"),
+						"author": item.get("author", "Unknown"),
+						"category": category_name,
+						"tags": [_to_slug(category_name)],
+						"version": item.get("version_string", ""),
+						"description": item.get("description", ""),
+						"icon_url": item.get("icon_url", ""),
+						"license": item.get("cost", "MIT"),
+						"cost": "Free",
+						"godot_version": item.get("godot_version", "4.0"),
+						"browse_url": "https://godotengine.org/asset-library/asset/%s" % asset_id
+					}
+
+			SOURCE_GODOT_BETA:
+				var json = JSON.new()
+				if json.parse(body_text) == OK and json.data is Dictionary:
+					var asset = json.data
+					var publisher_info = asset.get("publisher", {})
+					var publisher_slug = publisher_info.get("slug", "unknown")
+					var asset_slug = asset.get("slug", "")
+
+					var tag_to_category = {
+						"3d": "3D", "2d": "2D", "tool": "Tools", "audio": "Audio",
+						"template": "Templates", "materials": "Materials", "vfx": "VFX"
+					}
+					var tags = asset.get("tags", [])
+					var categories: Array[String] = []
+					var tag_slugs: Array[String] = []
+					for tag in tags:
+						var tag_slug = tag.get("slug", "") if tag is Dictionary else str(tag)
+						tag_slugs.append(tag_slug)
+						if tag_to_category.has(tag_slug):
+							var cat_display = tag_to_category[tag_slug]
+							if cat_display not in categories:
+								categories.append(cat_display)
+					var category_str = ", ".join(categories) if categories.size() > 0 else "Tools"
+
+					var thumbnail = asset.get("thumbnail", "")
+					if thumbnail.begins_with("/"):
+						thumbnail = "https://store-beta.godotengine.org" + thumbnail
+					elif thumbnail.is_empty():
+						thumbnail = GODOT_BETA_DEFAULT_IMAGE
+
+					info = {
+						"source": SOURCE_GODOT_BETA,
+						"asset_id": asset_id,
+						"title": asset.get("name", asset_slug.replace("-", " ").capitalize()),
+						"author": publisher_info.get("name", publisher_slug.replace("-", " ").capitalize()),
+						"category": category_str,
+						"tags": tag_slugs,
+						"version": "",
+						"description": asset.get("description", ""),
+						"icon_url": thumbnail,
+						"license": asset.get("license_type", "MIT"),
+						"cost": "Free" if asset.get("price_cent", 0) == 0 else "$%.2f" % (asset.get("price_cent", 0) / 100.0),
+						"browse_url": asset.get("store_url", "https://store-beta.godotengine.org/asset/%s/%s/" % [publisher_slug, asset_slug]),
+						"reviews_score": asset.get("reviews_score", 0)
+					}
+
+			SOURCE_SHADERS:
+				var slug = asset_id.replace("shader-", "")
+				var title = slug.replace("-", " ").capitalize()
+				var author = "Unknown"
+				var icon_url = ""
+
+				# Extract title from page
+				var title_regex = RegEx.new()
+				title_regex.compile('<title>([^<|]+)')
+				var title_match = title_regex.search(body_text)
+				if title_match:
+					title = title_match.get_string(1).strip_edges()
+					if title.ends_with(" - Godot Shaders"):
+						title = title.substr(0, title.length() - 16)
+
+				# Extract author
+				var author_regex = RegEx.new()
+				author_regex.compile('by\\s*<a[^>]*>([^<]+)</a>')
+				var author_match = author_regex.search(body_text)
+				if author_match:
+					author = author_match.get_string(1).strip_edges()
+
+				# Extract og:image
+				var og_regex = RegEx.new()
+				og_regex.compile('property="og:image"[^>]*content="([^"]+)"')
+				var og_match = og_regex.search(body_text)
+				if og_match:
+					icon_url = og_match.get_string(1)
+
+				info = {
+					"source": SOURCE_SHADERS,
+					"asset_id": asset_id,
+					"title": title,
+					"author": author,
+					"category": cat_info.get("display", "Shaders"),
+					"icon_url": icon_url,
+					"browse_url": "https://godotshaders.com/shader/%s/" % slug
+				}
+
+		if not info.is_empty() and not _is_assetplus(info):
+			_home_most_liked_assets[section_key].append(info)
+
+	# Check if all details are fetched
+	if _home_most_liked_pending[section_key] <= 0:
+		_finalize_home_most_liked_section(section_key, source)
+
+
+func _finalize_home_most_liked_section(section_key: String, source: String) -> void:
+	## Display the collected Most Liked assets for a home section
+	_home_pending_requests -= 1
+	if _home_pending_requests <= 0:
+		_loading_label.visible = false
+
+	if not _home_sections.has(section_key):
+		return
+
+	var section_data = _home_sections[section_key]
+	var container: HBoxContainer = section_data.container
+
+	# Remove skeleton cards
+	_remove_skeleton_cards(section_key)
+
+	# Clear any existing cards
+	for child in container.get_children():
+		if is_instance_valid(child):
+			var idx = _cards.find(child)
+			if idx >= 0:
+				_cards.remove_at(idx)
+			child.queue_free()
+	section_data.assets.clear()
+
+	# Add cards for collected assets
+	var assets = _home_most_liked_assets.get(section_key, [])
+	SettingsDialog.debug_print("Home Most Liked section %s: displaying %d assets" % [section_key, assets.size()])
+
+	for info in assets:
+		section_data.assets.append(info)
+		_create_home_card(info, container)
+
+	# Cleanup
+	_home_most_liked_assets.erase(section_key)
+	_home_most_liked_pending.erase(section_key)
+
+
+func _on_home_section_response(result: int, code: int, body: PackedByteArray, section_key: String, source: String) -> void:
+	## Handle response for a home section
+	_home_pending_requests -= 1
+
+	if _home_pending_requests <= 0:
+		_loading_label.visible = false
+
+	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+		SettingsDialog.debug_print("Home section %s: HTTP error %d" % [section_key, code])
+		_remove_skeleton_cards(section_key)
+		return
+
+	if not _home_sections.has(section_key):
+		return
+
+	var json_str = body.get_string_from_utf8()
+	var json = JSON.new()
+	if json.parse(json_str) != OK:
+		_remove_skeleton_cards(section_key)
+		return
+
+	var data = json.data
+	var section_data = _home_sections[section_key]
+	var container: HBoxContainer = section_data.container
+
+	# Check if we already have cards from cache (don't remove them, just update)
+	var has_cached_cards = section_data.assets.size() > 0 and section_data.skeletons.is_empty()
+
+	if has_cached_cards:
+		# We already displayed cached data, clear it for fresh data
+		for child in container.get_children():
+			if is_instance_valid(child):
+				# Remove from _cards tracking
+				var idx = _cards.find(child)
+				if idx >= 0:
+					_cards.remove_at(idx)
+				child.queue_free()
+		section_data.assets.clear()
+
+	# Remove skeleton cards before adding real ones
+	_remove_skeleton_cards(section_key)
+
+	# Parse response based on source
+	match source:
+		SOURCE_GODOT_BETA:
+			_parse_home_beta_response(data, section_data, container, section_key, source)
+		SOURCE_GODOT:
+			_parse_home_assetlib_response(data, section_data, container, section_key, source)
+		SOURCE_SHADERS:
+			_parse_home_shaders_response(data, section_data, container, section_key, source)
+
+
+func _parse_home_beta_response(data: Variant, section_data: Dictionary, container: HBoxContainer, section_key: String, source: String) -> void:
+	## Parse Store Beta API response for home section
+	if not data is Dictionary:
+		return
+
+	var hits: Array = data.get("hits", [])
+
+	# Map tag slugs to display categories
+	var tag_to_category = {
+		"3d": "3D", "2d": "2D", "tool": "Tools", "audio": "Audio",
+		"template": "Templates", "materials": "Materials", "vfx": "VFX"
+	}
+
+	for hit in hits:
+		var asset = hit.get("asset", {})
+		if asset.is_empty():
+			continue
+
+		var publisher_info = asset.get("publisher", {})
+		var publisher_slug = publisher_info.get("slug", "unknown")
+		var asset_slug = asset.get("slug", "")
+		var key = "%s/%s" % [publisher_slug, asset_slug]
+
+		# Extract categories from tags
+		var tags = asset.get("tags", [])
+		var categories: Array[String] = []
+		var tag_slugs: Array[String] = []  # Raw tag slugs for likes API
+		for tag in tags:
+			var tag_slug = tag.get("slug", "") if tag is Dictionary else str(tag)
+			tag_slugs.append(tag_slug)  # Store raw slug
+			if tag_to_category.has(tag_slug):
+				var cat_display = tag_to_category[tag_slug]
+				if cat_display not in categories:
+					categories.append(cat_display)
+
+		var category_str = ", ".join(categories) if categories.size() > 0 else "Tools"
+
+		# Handle thumbnail URL
+		var thumbnail = asset.get("thumbnail", "")
+		if thumbnail.begins_with("/"):
+			thumbnail = "https://store-beta.godotengine.org" + thumbnail
+		elif thumbnail.is_empty():
+			thumbnail = GODOT_BETA_DEFAULT_IMAGE
+
+		var info = {
+			"source": SOURCE_GODOT_BETA,
+			"asset_id": key,
+			"title": asset.get("name", asset_slug.replace("-", " ").capitalize()),
+			"author": publisher_info.get("name", publisher_slug.replace("-", " ").capitalize()),
+			"category": category_str,
+			"tags": tag_slugs,  # Raw tags for likes API
+			"version": "",
+			"description": asset.get("description", ""),
+			"icon_url": thumbnail,
+			"license": asset.get("license_type", "MIT"),
+			"cost": "Free" if asset.get("price_cent", 0) == 0 else "$%.2f" % (asset.get("price_cent", 0) / 100.0),
+			"browse_url": asset.get("store_url", "https://store-beta.godotengine.org/asset/%s/%s/" % [publisher_slug, asset_slug]),
+			"reviews_score": asset.get("reviews_score", 0)
+		}
+
+		# Skip AssetPlus
+		if _is_assetplus(info):
+			continue
+
+		section_data.assets.append(info)
+		_create_home_card(info, container)
+
+	# Save to cache for instant load next time
+	_save_home_cache(source, section_key, section_data.assets)
+
+
+func _parse_home_assetlib_response(data: Variant, section_data: Dictionary, container: HBoxContainer, section_key: String, source: String) -> void:
+	## Parse AssetLib API response for home section
+	if not data is Dictionary:
+		return
+
+	var results: Array = data.get("result", [])
+	var category_map = {
+		"1": "2D Tools", "2": "3D Tools", "3": "Shaders", "4": "Materials",
+		"5": "Tools", "6": "Scripts", "7": "Misc", "8": "Templates", "9": "Projects", "10": "Demos"
+	}
+
+	for item in results:
+		var asset_id = str(item.get("asset_id", ""))
+		var category_id = str(item.get("category_id", "5"))
+		var category_name = category_map.get(category_id, "Tools")
+
+		var info = {
+			"source": SOURCE_GODOT,
+			"asset_id": asset_id,
+			"title": item.get("title", "Unknown"),
+			"author": item.get("author", "Unknown"),
+			"category": category_name,
+			"tags": [_to_slug(category_name)],
+			"version": item.get("version_string", ""),
+			"description": item.get("description", ""),
+			"icon_url": item.get("icon_url", ""),
+			"license": item.get("cost", "MIT"),
+			"cost": "Free",
+			"godot_version": item.get("godot_version", "4.0"),
+			"browse_url": "https://godotengine.org/asset-library/asset/%s" % asset_id
+		}
+
+		# Skip AssetPlus
+		if _is_assetplus(info):
+			continue
+
+		section_data.assets.append(info)
+		_create_home_card(info, container)
+
+	# Save to cache for instant load next time
+	_save_home_cache(source, section_key, section_data.assets)
+
+
+func _parse_home_shaders_response(data: Variant, section_data: Dictionary, container: HBoxContainer, section_key: String, source: String) -> void:
+	## Parse Godot Shaders API response for home section (JSON with embedded HTML)
+	if not data is Dictionary or not data.has("html"):
+		return
+
+	var html: String = data.get("html", "")
+
+	# Parse shader cards from the HTML
+	var card_regex = RegEx.new()
+	card_regex.compile('<article[^>]*class="[^"]*gds-shader-card[^"]*"[^>]*>([\\s\\S]*?)</article>')
+	var cards = card_regex.search_all(html)
+
+	for card_match in cards:
+		var card_html = card_match.get_string(0)
+
+		# Extract link/slug
+		var slug = ""
+		var link = ""
+		var link_regex = RegEx.new()
+		link_regex.compile('href="https://godotshaders\\.com/shader/([a-z0-9-]+)/?"')
+		var link_match = link_regex.search(card_html)
+		if link_match:
+			slug = link_match.get_string(1)
+			link = "https://godotshaders.com/shader/%s/" % slug
+
+		if slug.is_empty():
+			continue
+
+		# Extract title
+		var title = slug.replace("-", " ").capitalize()
+		var title_regex = RegEx.new()
+		title_regex.compile('class="[^"]*gds-shader-card__title[^"]*"[^>]*>([^<]+)<')
+		var title_match = title_regex.search(card_html)
+		if title_match:
+			title = title_match.get_string(1).strip_edges()
+
+		# Extract author
+		var author = "Unknown"
+		var author_regex = RegEx.new()
+		author_regex.compile('class="[^"]*gds-shader-card__author[^"]*"[^>]*>([^<]+)<')
+		var author_match = author_regex.search(card_html)
+		if author_match:
+			author = author_match.get_string(1).strip_edges()
+
+		# Extract image
+		var icon_url = ""
+		var img_regex = RegEx.new()
+		img_regex.compile('class="[^"]*gds-shader-card__cover[^"]*"[^>]*style="[^"]*background-image:\\s*url\\(([^)]+)\\)')
+		var img_match = img_regex.search(card_html)
+		if img_match:
+			icon_url = img_match.get_string(1).strip_edges()
+			icon_url = icon_url.trim_prefix("'").trim_suffix("'")
+			icon_url = icon_url.trim_prefix('"').trim_suffix('"')
+
+		# Extract shader type
+		var category = "Shader"
+		var shader_type_tag = ""  # Raw tag for likes API
+		var type_regex = RegEx.new()
+		type_regex.compile('gds-shader-card__type--([a-z_]+)')
+		var type_match = type_regex.search(card_html)
+		if type_match:
+			var shader_type = type_match.get_string(1)
+			shader_type_tag = shader_type  # Store raw type for likes
+			match shader_type:
+				"canvas_item":
+					category = "2D Shader"
+				"spatial":
+					category = "3D Shader"
+				"particles":
+					category = "Particles"
+				"sky":
+					category = "Sky"
+				"fog":
+					category = "Fog"
+				_:
+					category = shader_type.replace("_", " ").capitalize()
+
+		var info = {
+			"source": SOURCE_SHADERS,
+			"asset_id": "shader-" + slug,
+			"title": title,
+			"author": author,
+			"category": category,
+			"tags": [shader_type_tag] if not shader_type_tag.is_empty() else [],  # Raw tag for likes API
+			"version": "",
+			"description": "",
+			"icon_url": icon_url,
+			"license": "MIT",
+			"cost": "Free",
+			"browse_url": link
+		}
+
+		section_data.assets.append(info)
+		_create_home_card(info, container)
+
+	# Save to cache for instant load next time
+	_save_home_cache(source, section_key, section_data.assets)
+
+
+func _create_home_card(info: Dictionary, container: HBoxContainer) -> void:
+	## Create a modern-style card for the home page horizontal scroll (responsive size)
+	var is_fav = _is_favorite(info)
+	var is_inst = _is_addon_installed(info.get("asset_id", ""))
+
+	var card = AssetCard.new()
+	card.set_card_type(AssetCard.CardType.MODERN, _modern_card_size)
+	card.setup(info, is_fav, is_inst)
+	card.clicked.connect(_on_asset_clicked)
+	card.favorite_clicked.connect(_on_favorite_clicked)
+	container.add_child(card)
+	_cards.append(card)
+
+	# Initialize likes (Store view shows "0" when no likes)
+	var asset_id = info.get("asset_id", "")
+	card.set_always_show_count(true)  # Store shows "0"
+	if not asset_id.is_empty():
+		card.set_like_count(get_like_count(asset_id))
+		card.set_liked(is_fav)
+
+	# Update container minimum size based on card count and responsive size
+	var card_width = int(_modern_card_size.x)
+	var card_count = container.get_child_count()
+	var total_width = card_count * card_width + (card_count - 1) * MODERN_CARD_SPACING
+	container.custom_minimum_size.x = total_width
+
+	# Load icon
+	var icon_url = info.get("icon_url", "")
+	if not icon_url.is_empty():
+		_load_icon(card, icon_url)
+	elif _default_icon:
+		card.set_icon(_default_icon)
+
+
+func _on_home_category_clicked(category_name: String) -> void:
+	## Switch to regular search view with the selected category
+	# Find and select the category by name first (before _update_filters_for_source resets it)
+	_update_filters_for_source()
+	for i in range(_category_filter.item_count):
+		if _category_filter.get_item_text(i) == category_name:
+			_category_filter.select(i)
+			break
+
+	# Set a placeholder search to trigger grid view instead of Home
+	# This forces the grid view without showing text in search
+	_search_query = "*"
+	_search_edit.text = ""
+	_current_page = 0
+	_update_tab_buttons()
+	_search_assets()
+
+
 func _show_favorites() -> void:
+	_clear_home_container()
+	_assets_grid.visible = true
+
 	# Clear current assets
 	for child in _assets_grid.get_children():
 		child.queue_free()
 	_cards.clear()
+	_icon_queue.clear()  # Clear pending icon downloads
 	_assets.clear()
 
 	_loading_label.text = "Loading..."
@@ -1877,13 +3289,17 @@ func _show_favorites() -> void:
 			return _search_query.to_lower() in a.get("title", "").to_lower()
 		)
 
-	# Filter by category
+	# Filter by category (supports comma-separated categories like "3D, 2D")
 	if _filter_selected_category != "All":
 		filtered = filtered.filter(func(a):
-			var cat = a.get("category", "Unknown")
-			if cat.is_empty():
-				cat = "Unknown"
-			return cat == _filter_selected_category
+			var cat_str = a.get("category", "Unknown")
+			if cat_str.is_empty():
+				cat_str = "Unknown"
+			# Check if selected category is in the comma-separated list
+			for cat in _split_categories(cat_str):
+				if cat == _filter_selected_category:
+					return true
+			return false
 		)
 
 	# Filter by source
@@ -1895,9 +3311,39 @@ func _show_favorites() -> void:
 			return src == _filter_selected_source
 		)
 
+	var needs_sync = false
 	for info in filtered:
 		_assets.append(info)
 		_create_asset_card(info)
+
+		# Auto-sync old favorites: if favorite has 0 likes on server, send a like
+		var asset_id = info.get("asset_id", "")
+		if not asset_id.is_empty():
+			var server_likes = get_like_count(asset_id)
+			if server_likes == 0:
+				# Skip local items
+				var source = info.get("source", "")
+				if not source.is_empty() and source != SOURCE_GLOBAL_FOLDER and not asset_id.begins_with("global_"):
+					if not needs_sync:
+						_syncing_likes = true
+						needs_sync = true
+					SettingsDialog.debug_print("Likes: auto-syncing favorite with 0 likes '%s'" % info.get("title", asset_id))
+					# Use tags directly
+					var categories: Array = info.get("tags", []).duplicate()
+					if categories.is_empty():
+						var cat = info.get("category", "")
+						if not cat.is_empty():
+							categories = _category_to_tags(cat)
+					_like_asset(asset_id, _source_to_slug(source), categories)
+
+	# Reset sync flag after delay if we synced anything
+	if needs_sync:
+		var self_ref = weakref(self)
+		get_tree().create_timer(5.0).timeout.connect(func():
+			var panel = self_ref.get_ref()
+			if panel:
+				panel._syncing_likes = false
+		)
 
 	# Show empty state messages
 	if _assets.is_empty():
@@ -1938,10 +3384,14 @@ func _on_open_global_folder_pressed() -> void:
 
 
 func _show_global_folder() -> void:
+	_clear_home_container()
+	_assets_grid.visible = true
+
 	# Clear current assets
 	for child in _assets_grid.get_children():
 		child.queue_free()
 	_cards.clear()
+	_icon_queue.clear()  # Clear pending icon downloads
 	_assets.clear()
 
 	_loading_label.text = "Loading..."
@@ -2036,13 +3486,16 @@ func _show_global_folder() -> void:
 			return _search_query.to_lower() in a.get("title", "").to_lower()
 		)
 
-	# Filter by category
+	# Filter by category (supports comma-separated categories)
 	if _filter_selected_category != "All":
 		packages = packages.filter(func(a):
-			var cat = a.get("category", "Unknown")
-			if cat.is_empty():
-				cat = "Unknown"
-			return cat == _filter_selected_category
+			var cat_str = a.get("category", "Unknown")
+			if cat_str.is_empty():
+				cat_str = "Unknown"
+			for cat in _split_categories(cat_str):
+				if cat == _filter_selected_category:
+					return true
+			return false
 		)
 
 	# Filter by source (original source)
@@ -2082,6 +3535,19 @@ func _create_global_folder_card(info: Dictionary) -> void:
 	card.favorite_clicked.connect(_on_favorite_clicked)
 	_assets_grid.add_child(card)
 	_cards.append(card)
+
+	# Initialize likes
+	var source = info.get("source", "")
+	var is_local = source.is_empty() or source == SOURCE_GLOBAL_FOLDER or asset_id.begins_with("global_")
+
+	if is_local:
+		# Local item - show like button for favorites but hide the count (local likes only)
+		card.set_always_show_count(false)
+		card.set_liked(is_fav)
+	elif not asset_id.is_empty():
+		# Has a real source - show likes with count
+		card.set_like_count(get_like_count(asset_id))
+		card.set_liked(is_fav)
 
 	# Load icon: prioritize embedded icon, then URL, then default
 	var embedded_icon = info.get("_embedded_icon", null)
@@ -2496,10 +3962,14 @@ func _show_global_folder_setup_then_export(folder_path: String, info: Dictionary
 
 
 func _show_installed() -> void:
+	_clear_home_container()
+	_assets_grid.visible = true
+
 	# Clear current assets
 	for child in _assets_grid.get_children():
 		child.queue_free()
 	_cards.clear()
+	_icon_queue.clear()  # Clear pending icon downloads
 	_assets.clear()
 
 	_loading_label.text = "Loading..."
@@ -2536,6 +4006,9 @@ func _show_installed() -> void:
 
 		# Handle new format {paths, info}, old format {path, info} and legacy format (just string path)
 		if entry is Dictionary:
+			# Skip addons pending deletion (GDExtensions waiting for restart)
+			if entry.get("pending_delete", false):
+				continue
 			if entry.has("paths") and entry["paths"] is Array:
 				paths = entry["paths"]
 			elif entry.has("path"):
@@ -2607,12 +4080,17 @@ func _show_installed() -> void:
 			if not _search_query.to_lower() in info.get("title", "").to_lower():
 				continue
 
-		# Filter by category
+		# Filter by category (supports comma-separated categories)
 		if _filter_selected_category != "All":
-			var asset_cat = info.get("category", "Unknown")
-			if asset_cat.is_empty():
-				asset_cat = "Unknown"
-			if asset_cat != _filter_selected_category:
+			var cat_str = info.get("category", "Unknown")
+			if cat_str.is_empty():
+				cat_str = "Unknown"
+			var category_match = false
+			for cat in _split_categories(cat_str):
+				if cat == _filter_selected_category:
+					category_match = true
+					break
+			if not category_match:
 				continue
 
 		# Filter by source
@@ -2702,12 +4180,17 @@ func _scan_native_addons(exclude_paths: Array[String]) -> void:
 						folder_name = dir.get_next()
 						continue
 
-				# Filter by category
+				# Filter by category (supports comma-separated categories)
 				if _filter_selected_category != "All":
-					var asset_cat = info.get("category", "Unknown")
-					if asset_cat.is_empty():
-						asset_cat = "Unknown"
-					if asset_cat != _filter_selected_category:
+					var cat_str = info.get("category", "Unknown")
+					if cat_str.is_empty():
+						cat_str = "Unknown"
+					var category_match = false
+					for cat in _split_categories(cat_str):
+						if cat == _filter_selected_category:
+							category_match = true
+							break
+					if not category_match:
 						folder_name = dir.get_next()
 						continue
 
@@ -2743,6 +4226,321 @@ func _scan_native_addons(exclude_paths: Array[String]) -> void:
 			_loading_label.visible = true
 
 
+# Cache for Most Liked sort results
+var _most_liked_asset_ids: Array = []
+var _most_liked_fetching_details: bool = false
+var _most_liked_details_pending: int = 0
+
+func _fetch_most_liked_assets() -> void:
+	## Fetch most liked assets from our likes API, then fetch their details
+	var http = HTTPRequest.new()
+	add_child(http)
+	_http_requests.append(http)
+
+	# Determine source name for API
+	var source_name = ""
+	match _current_source:
+		SOURCE_GODOT:
+			source_name = "assetlib"
+		SOURCE_GODOT_BETA:
+			source_name = "store-beta"
+		SOURCE_SHADERS:
+			source_name = "shaders"
+
+	# Get category if selected
+	var category_name = ""
+	var category_idx = _category_filter.selected
+	if category_idx > 0 and _category_filter.item_count > category_idx:
+		var cat_text = _category_filter.get_item_text(category_idx)
+		# Map Shaders categories to their tag slugs
+		if _current_source == SOURCE_SHADERS:
+			match cat_text:
+				"2D (Canvas Item)":
+					category_name = "canvas_item"
+				"3D (Spatial)":
+					category_name = "spatial"
+				"Sky":
+					category_name = "sky"
+				"Particles":
+					category_name = "particles"
+				"Fog":
+					category_name = "fog"
+				_:
+					category_name = cat_text.to_lower().replace(" ", "_")
+		else:
+			category_name = cat_text.to_lower().replace(" ", "-")
+
+	# Build URL
+	var url = LIKES_API + "/likes/top?source=%s&limit=50" % source_name.uri_encode()
+	if not category_name.is_empty():
+		url += "&category=%s" % category_name.uri_encode()
+
+	SettingsDialog.debug_print("Most Liked: fetching from %s" % url)
+
+	var self_ref = weakref(self)
+	http.request_completed.connect(func(result, code, headers, body):
+		http.queue_free()
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._http_requests.erase(http)
+			panel._on_most_liked_response(result, code, body)
+	)
+	http.request(url)
+
+
+func _on_most_liked_response(result: int, code: int, body: PackedByteArray) -> void:
+	## Handle response from /likes/top API
+	if _current_tab != Tab.STORE:
+		_check_no_results()
+		return
+
+	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+		SettingsDialog.debug_print("Most Liked: HTTP error %d" % code)
+		_loading_label.text = "Failed to fetch most liked assets"
+		_loading_label.visible = true
+		_check_no_results()
+		return
+
+	var json = JSON.new()
+	if json.parse(body.get_string_from_utf8()) != OK:
+		SettingsDialog.debug_print("Most Liked: JSON parse error")
+		_check_no_results()
+		return
+
+	var data = json.data
+	if not data is Array:
+		SettingsDialog.debug_print("Most Liked: Invalid response format")
+		_check_no_results()
+		return
+
+	SettingsDialog.debug_print("Most Liked: received %d assets" % data.size())
+
+	if data.is_empty():
+		_loading_label.text = "No liked assets found for this filter"
+		_loading_label.visible = true
+		_check_no_results()
+		return
+
+	# Store asset IDs and their like counts for later sorting
+	_most_liked_asset_ids.clear()
+	for item in data:
+		if item is Dictionary and item.has("id"):
+			_most_liked_asset_ids.append({
+				"id": item.get("id", ""),
+				"count": int(item.get("count", 0))
+			})
+
+	# Now fetch details for each asset from the appropriate source
+	_most_liked_fetching_details = true
+	_most_liked_details_pending = _most_liked_asset_ids.size()
+
+	for item in _most_liked_asset_ids:
+		_fetch_asset_details_for_most_liked(item.id)
+
+
+func _fetch_asset_details_for_most_liked(asset_id: String) -> void:
+	## Fetch individual asset details from the source API
+	var http = HTTPRequest.new()
+	add_child(http)
+	_http_requests.append(http)
+
+	var url = ""
+	match _current_source:
+		SOURCE_GODOT:
+			url = "%s/asset/%s" % [GODOT_API, asset_id]
+		SOURCE_GODOT_BETA:
+			url = "https://store-beta.godotengine.org/api/v1/assets/%s/" % asset_id  # Trailing slash required
+		SOURCE_SHADERS:
+			# Fetch shader page directly (HTML)
+			var slug = asset_id.replace("shader-", "")
+			url = "https://godotshaders.com/shader/%s/" % slug
+		_:
+			_most_liked_details_pending -= 1
+			_check_most_liked_complete()
+			http.queue_free()
+			return
+
+	SettingsDialog.debug_print("Most Liked: fetching details for %s from %s" % [asset_id, url])
+
+	var self_ref = weakref(self)
+	http.request_completed.connect(func(result, code, headers, body):
+		http.queue_free()
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._http_requests.erase(http)
+			panel._on_most_liked_asset_details(result, code, body, asset_id)
+	)
+	http.request(url)
+
+
+func _on_most_liked_asset_details(result: int, code: int, body: PackedByteArray, asset_id: String) -> void:
+	## Handle individual asset details response
+	_most_liked_details_pending -= 1
+
+	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
+		SettingsDialog.debug_print("Most Liked: Failed to fetch details for %s (code %d)" % [asset_id, code])
+		_check_most_liked_complete()
+		return
+
+	var body_text = body.get_string_from_utf8()
+	var info: Dictionary = {}
+
+	# Shaders returns HTML page
+	if _current_source == SOURCE_SHADERS:
+		var slug = asset_id.replace("shader-", "")
+		var title = slug.replace("-", " ").capitalize()
+		var author = "Unknown"
+		var icon_url = ""
+
+		# Try to extract title from page
+		var title_regex = RegEx.new()
+		title_regex.compile('<title>([^<|]+)')
+		var title_match = title_regex.search(body_text)
+		if title_match:
+			title = title_match.get_string(1).strip_edges()
+			# Remove " - Godot Shaders" suffix if present
+			if title.ends_with(" - Godot Shaders"):
+				title = title.substr(0, title.length() - 16)
+
+		# Try to extract author - multiple patterns
+		var author_regex = RegEx.new()
+		# Pattern 1: "by <a>Author</a>"
+		author_regex.compile('by\\s*<a[^>]*>([^<]+)</a>')
+		var author_match = author_regex.search(body_text)
+		if author_match:
+			author = author_match.get_string(1).strip_edges()
+		else:
+			# Pattern 2: class="author"
+			var author_regex2 = RegEx.new()
+			author_regex2.compile('class="[^"]*author[^"]*"[^>]*>([^<]+)<')
+			var author_match2 = author_regex2.search(body_text)
+			if author_match2:
+				author = author_match2.get_string(1).strip_edges()
+			else:
+				# Pattern 3: meta author tag
+				var author_regex3 = RegEx.new()
+				author_regex3.compile('name="author"[^>]*content="([^"]+)"')
+				var author_match3 = author_regex3.search(body_text)
+				if author_match3:
+					author = author_match3.get_string(1).strip_edges()
+
+		# Try to extract og:image
+		var og_regex = RegEx.new()
+		og_regex.compile('property="og:image"[^>]*content="([^"]+)"')
+		var og_match = og_regex.search(body_text)
+		if og_match:
+			icon_url = og_match.get_string(1)
+		else:
+			# Try alternate og:image format
+			var og_regex2 = RegEx.new()
+			og_regex2.compile('content="([^"]+)"[^>]*property="og:image"')
+			var og_match2 = og_regex2.search(body_text)
+			if og_match2:
+				icon_url = og_match2.get_string(1)
+
+		info = {
+			"source": SOURCE_SHADERS,
+			"asset_id": asset_id,
+			"title": title,
+			"author": author,
+			"category": "Shader",
+			"version": "",
+			"description": "",
+			"icon_url": icon_url,
+			"license": "MIT",
+			"cost": "Free",
+			"browse_url": "https://godotshaders.com/shader/%s/" % slug
+		}
+	else:
+		# JSON response for AssetLib and Store Beta
+		var json = JSON.new()
+		if json.parse(body_text) != OK:
+			SettingsDialog.debug_print("Most Liked: JSON parse error for %s" % asset_id)
+			_check_most_liked_complete()
+			return
+
+		var data = json.data
+		if not data is Dictionary:
+			_check_most_liked_complete()
+			return
+
+		# Parse asset based on source
+		match _current_source:
+			SOURCE_GODOT:
+				var category_str = data.get("category", "")
+				info = {
+					"source": SOURCE_GODOT,
+					"asset_id": str(data.get("asset_id", asset_id)),
+					"title": data.get("title", "Unknown"),
+					"author": data.get("author", "Unknown"),
+					"category": category_str,
+					"tags": [_to_slug(category_str)] if not category_str.is_empty() else ["tools"],
+					"version": data.get("version_string", ""),
+					"description": data.get("description", ""),
+					"icon_url": data.get("icon_url", ""),
+					"cost": data.get("cost", "Free"),
+					"license": data.get("license", "MIT"),
+					"support_level": data.get("support_level", ""),
+					"browse_url": "https://godotengine.org/asset-library/asset/" + str(data.get("asset_id", asset_id)),
+					"modify_date": data.get("modify_date", "")
+				}
+			SOURCE_GODOT_BETA:
+				# API returns: name, slug, publisher{name,slug}, thumbnail, license_type
+				var publisher_info = data.get("publisher", {})
+				var publisher_slug = publisher_info.get("slug", "") if publisher_info is Dictionary else ""
+				var asset_slug = data.get("slug", "")
+				# Handle thumbnail URL - prefix with domain if relative
+				var thumbnail = data.get("thumbnail", "")
+				if thumbnail.begins_with("/"):
+					thumbnail = "https://store-beta.godotengine.org" + thumbnail
+				info = {
+					"source": SOURCE_GODOT_BETA,
+					"asset_id": asset_id,  # Keep original asset_id (publisher/slug format)
+					"title": data.get("name", "Unknown"),
+					"author": publisher_info.get("name", "Unknown") if publisher_info is Dictionary else "Unknown",
+					"category": "",
+					"version": "",
+					"description": data.get("summary", "") if data.get("summary") else "",
+					"icon_url": thumbnail,
+					"cost": "Free",
+					"license": data.get("license_type", "MIT"),
+					"support_level": "",
+					"browse_url": "https://store-beta.godotengine.org/asset/%s/%s/" % [publisher_slug, asset_slug] if publisher_slug and asset_slug else "https://store-beta.godotengine.org",
+					"modify_date": ""
+				}
+
+	if not info.is_empty() and not _is_assetplus(info):
+		# Find the like count for this asset to use for sorting
+		for item in _most_liked_asset_ids:
+			if item.id == asset_id:
+				info["_like_rank"] = item.count
+				break
+		_assets.append(info)
+
+	_check_most_liked_complete()
+
+
+func _check_most_liked_complete() -> void:
+	## Check if all Most Liked asset details have been fetched
+	if _most_liked_details_pending > 0:
+		return
+
+	_most_liked_fetching_details = false
+
+	# Sort assets by like count (descending) - use the stored rank
+	_assets.sort_custom(func(a, b):
+		return a.get("_like_rank", 0) > b.get("_like_rank", 0)
+	)
+
+	# Display the sorted assets
+	for asset_info in _assets:
+		_create_asset_card(asset_info)
+
+	_loading_label.visible = false
+	_update_pagination()
+	_check_no_results()
+
+
 func _fetch_godot_assets() -> void:
 	var http = HTTPRequest.new()
 	add_child(http)
@@ -2775,10 +4573,13 @@ func _fetch_godot_assets() -> void:
 
 	SettingsDialog.debug_print(" Fetching AssetLib URL: %s" % url)
 
+	var self_ref = weakref(self)
 	http.request_completed.connect(func(result, code, headers, body):
-		_http_requests.erase(http)
 		http.queue_free()
-		_on_godot_response(result, code, body)
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._http_requests.erase(http)
+			panel._on_godot_response(result, code, body)
 	)
 	http.request(url)
 
@@ -2786,11 +4587,17 @@ func _fetch_godot_assets() -> void:
 func _on_godot_response(result: int, code: int, body: PackedByteArray) -> void:
 	# Don't add cards if we've switched away from Store tab
 	if _current_tab != Tab.STORE:
+		if _current_source == SOURCE_ALL:
+			_all_sources_pending -= 1
+			_try_display_all_sources()
 		_check_no_results()
 		return
 
 	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
 		SettingsDialog.debug_print(" AssetLib request failed - code %d" % code)
+		if _current_source == SOURCE_ALL:
+			_all_sources_pending -= 1
+			_try_display_all_sources()
 		_check_no_results()
 		return
 
@@ -2806,6 +4613,10 @@ func _on_godot_response(result: int, code: int, body: PackedByteArray) -> void:
 	var json = JSON.new()
 	if json.parse(response_text) != OK:
 		SettingsDialog.debug_print(" Failed to parse JSON response")
+		if _current_source == SOURCE_ALL:
+			_all_sources_pending -= 1
+			_try_display_all_sources()
+		_check_no_results()
 		return
 
 	var data = json.data
@@ -2813,28 +4624,40 @@ func _on_godot_response(result: int, code: int, body: PackedByteArray) -> void:
 
 	var results = data.get("result", [])
 	for asset in results:
+		var category_str = asset.get("category", "")
 		var info = {
 			"source": SOURCE_GODOT,
 			"asset_id": str(asset.get("asset_id", "")),
 			"title": asset.get("title", "Unknown"),
 			"author": asset.get("author", "Unknown"),
-			"category": asset.get("category", ""),
+			"category": category_str,
+			"tags": [_to_slug(category_str)] if not category_str.is_empty() else ["tools"],
 			"version": asset.get("version_string", ""),
 			"description": asset.get("description", ""),
 			"icon_url": asset.get("icon_url", ""),
 			"cost": asset.get("cost", "Free"),
 			"license": asset.get("license", "MIT"),
 			"support_level": asset.get("support_level", ""),
-			"browse_url": "https://godotengine.org/asset-library/asset/" + str(asset.get("asset_id", ""))
+			"browse_url": "https://godotengine.org/asset-library/asset/" + str(asset.get("asset_id", "")),
+			"modify_date": asset.get("modify_date", "")
 		}
 		# Skip AssetPlus itself from store results
 		if _is_assetplus(info):
 			continue
-		_assets.append(info)
-		_create_asset_card(info)
 
-	_loading_label.visible = false
-	_update_pagination()
+		# In "All Sources" mode, buffer results instead of displaying immediately
+		if _current_source == SOURCE_ALL:
+			_all_sources_buffer.append(info)
+		else:
+			_assets.append(info)
+			_create_asset_card(info)
+
+	if _current_source == SOURCE_ALL:
+		_all_sources_pending -= 1
+		_try_display_all_sources()
+	else:
+		_loading_label.visible = false
+		_update_pagination()
 	_check_no_results()
 
 
@@ -2899,10 +4722,13 @@ func _fetch_beta_api_page() -> void:
 
 	SettingsDialog.debug_print("Fetching Beta Store API: %s" % url)
 
+	var self_ref = weakref(self)
 	http.request_completed.connect(func(result, code, headers, body):
-		_http_requests.erase(http)
 		http.queue_free()
-		_on_godot_beta_api_response(result, code, body)
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._http_requests.erase(http)
+			panel._on_godot_beta_api_response(result, code, body)
 	)
 	http.request(url)
 
@@ -2910,11 +4736,17 @@ func _fetch_beta_api_page() -> void:
 func _on_godot_beta_api_response(result: int, code: int, body: PackedByteArray) -> void:
 	# Don't process if we've switched away from Store tab
 	if _current_tab != Tab.STORE:
+		if _current_source == SOURCE_ALL:
+			_all_sources_pending -= 1
+			_try_display_all_sources()
 		_check_no_results()
 		return
 
 	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
 		SettingsDialog.debug_print("Godot Store Beta API: HTTP error %d" % code)
+		if _current_source == SOURCE_ALL:
+			_all_sources_pending -= 1
+			_try_display_all_sources()
 		_check_no_results()
 		return
 
@@ -2922,20 +4754,36 @@ func _on_godot_beta_api_response(result: int, code: int, body: PackedByteArray) 
 	var json = JSON.new()
 	if json.parse(json_str) != OK:
 		SettingsDialog.debug_print("Godot Store Beta API: JSON parse error")
+		if _current_source == SOURCE_ALL:
+			_all_sources_pending -= 1
+			_try_display_all_sources()
 		_check_no_results()
 		return
 
 	var data = json.data
 	if not data is Dictionary:
 		SettingsDialog.debug_print("Godot Store Beta API: unexpected response format")
+		if _current_source == SOURCE_ALL:
+			_all_sources_pending -= 1
+			_try_display_all_sources()
 		_check_no_results()
 		return
 
 	# Get total count for pagination
 	_beta_total_count = int(data.get("count", "0"))
 
-	# Calculate total pages from server count
-	_total_pages = max(1, ceili(float(_beta_total_count) / ITEMS_PER_PAGE))
+	# Calculate total pages from server count (only if not "All Sources" mode)
+	if _current_source != SOURCE_ALL:
+		_total_pages = max(1, ceili(float(_beta_total_count) / ITEMS_PER_PAGE))
+
+		# Clear current page assets and rebuild only if NOT in "All Sources" mode
+		_assets.clear()
+		_cards.clear()
+		for child in _assets_grid.get_children():
+			child.queue_free()
+	else:
+		# In "All Sources" mode, just update total pages
+		_total_pages = max(_total_pages, ceili(float(_beta_total_count) / ITEMS_PER_PAGE))
 
 	var assets_array: Array = data.get("hits", [])
 
@@ -2949,12 +4797,6 @@ func _on_godot_beta_api_response(result: int, code: int, body: PackedByteArray) 
 		"materials": "Materials",
 		"vfx": "VFX"
 	}
-
-	# Clear current page assets and rebuild
-	_assets.clear()
-	_cards.clear()
-	for child in _assets_grid.get_children():
-		child.queue_free()
 
 	for hit in assets_array:
 		# Data is in hit.asset, not directly in hit
@@ -2970,8 +4812,10 @@ func _on_godot_beta_api_response(result: int, code: int, body: PackedByteArray) 
 		# Extract categories from tags
 		var tags = asset.get("tags", [])
 		var categories: Array[String] = []
+		var tag_slugs: Array[String] = []  # Raw tag slugs for likes API
 		for tag in tags:
 			var tag_slug = tag.get("slug", "") if tag is Dictionary else str(tag)
+			tag_slugs.append(tag_slug)  # Store raw slug
 			if tag_to_category.has(tag_slug):
 				var cat_display = tag_to_category[tag_slug]
 				if cat_display not in categories:
@@ -2992,24 +4836,35 @@ func _on_godot_beta_api_response(result: int, code: int, body: PackedByteArray) 
 			"title": asset.get("name", asset_slug.replace("-", " ").capitalize()),
 			"author": publisher_info.get("name", publisher_slug.replace("-", " ").capitalize()),
 			"category": category_str,
+			"tags": tag_slugs,  # Raw tags for likes API
 			"version": "",
 			"description": asset.get("description", ""),
 			"icon_url": thumbnail,
 			"license": asset.get("license_type", "MIT"),
 			"cost": "Free" if asset.get("price_cent", 0) == 0 else "$%.2f" % (asset.get("price_cent", 0) / 100.0),
 			"browse_url": asset.get("store_url", "https://store-beta.godotengine.org/asset/%s/%s/" % [publisher_slug, asset_slug]),
-			"reviews_score": asset.get("reviews_score", 0)
+			"reviews_score": asset.get("reviews_score", 0),
+			"modify_date": asset.get("updated_at", "")
 		}
 		# Skip AssetPlus itself from store results
 		if _is_assetplus(info):
 			continue
-		_assets.append(info)
-		_create_asset_card(info)
+
+		# In "All Sources" mode, buffer results instead of displaying immediately
+		if _current_source == SOURCE_ALL:
+			_all_sources_buffer.append(info)
+		else:
+			_assets.append(info)
+			_create_asset_card(info)
 
 	SettingsDialog.debug_print("Beta Store API: page %d/%d, showing %d assets (total: %d)" % [_current_page + 1, _total_pages, assets_array.size(), _beta_total_count])
 
-	_loading_label.visible = false
-	_update_pagination()
+	if _current_source == SOURCE_ALL:
+		_all_sources_pending -= 1
+		_try_display_all_sources()
+	else:
+		_loading_label.visible = false
+		_update_pagination()
 	_check_no_results()
 
 
@@ -3069,10 +4924,13 @@ func _fetch_godot_shaders() -> void:
 			_:
 				url += "&orderby=date&order=DESC"
 
+	var self_ref = weakref(self)
 	http.request_completed.connect(func(result, code, headers, body):
-		_http_requests.erase(http)
 		http.queue_free()
-		_on_godot_shaders_response(result, code, body)
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._http_requests.erase(http)
+			panel._on_godot_shaders_response(result, code, body)
 	)
 	http.request(url)
 
@@ -3080,11 +4938,17 @@ func _fetch_godot_shaders() -> void:
 func _on_godot_shaders_response(result: int, code: int, body: PackedByteArray) -> void:
 	# Don't add cards if we've switched away from Store tab
 	if _current_tab != Tab.STORE:
+		if _current_source == SOURCE_ALL:
+			_all_sources_pending -= 1
+			_try_display_all_sources()
 		_check_no_results()
 		return
 
 	if result != HTTPRequest.RESULT_SUCCESS or code != 200:
 		SettingsDialog.debug_print("Godot Shaders: HTTP error %d" % code)
+		if _current_source == SOURCE_ALL:
+			_all_sources_pending -= 1
+			_try_display_all_sources()
 		_check_no_results()
 		return
 
@@ -3096,12 +4960,18 @@ func _on_godot_shaders_response(result: int, code: int, body: PackedByteArray) -
 	var json = JSON.new()
 	if json.parse(response_text) != OK:
 		SettingsDialog.debug_print("Godot Shaders: Failed to parse JSON response")
+		if _current_source == SOURCE_ALL:
+			_all_sources_pending -= 1
+			_try_display_all_sources()
 		_check_no_results()
 		return
 
 	var data = json.data
 	if not data is Dictionary or not data.has("html"):
 		SettingsDialog.debug_print("Godot Shaders: Invalid JSON response format")
+		if _current_source == SOURCE_ALL:
+			_all_sources_pending -= 1
+			_try_display_all_sources()
 		_check_no_results()
 		return
 
@@ -3162,11 +5032,13 @@ func _on_godot_shaders_response(result: int, code: int, body: PackedByteArray) -
 
 		# Extract shader type from gds-shader-card__type--canvas_item or gds-shader-card__type--spatial
 		var category = "Shaders"
+		var shader_type_tag = ""  # Raw tag for likes API
 		var type_regex = RegEx.new()
 		type_regex.compile('gds-shader-card__type--([a-z_]+)')
 		var type_match = type_regex.search(card_html)
 		if type_match:
 			var shader_type = type_match.get_string(1)
+			shader_type_tag = shader_type  # Store raw type for likes
 			match shader_type:
 				"canvas_item":
 					category = "2D Shader"
@@ -3187,6 +5059,7 @@ func _on_godot_shaders_response(result: int, code: int, body: PackedByteArray) -
 			"title": title,
 			"author": author,
 			"category": category,
+			"tags": [shader_type_tag] if not shader_type_tag.is_empty() else [],  # Raw tag for likes API
 			"version": "",
 			"description": "",
 			"icon_url": icon_url,
@@ -3197,8 +5070,15 @@ func _on_godot_shaders_response(result: int, code: int, body: PackedByteArray) -
 
 	SettingsDialog.debug_print(" Parsed %d shaders from JSON API" % _shaders_all_assets.size())
 
-	_display_shaders_page()
-	_loading_label.visible = false
+	# In "All Sources" mode, buffer results instead of displaying immediately
+	if _current_source == SOURCE_ALL:
+		for shader_info in _shaders_all_assets:
+			_all_sources_buffer.append(shader_info)
+		_all_sources_pending -= 1
+		_try_display_all_sources()
+	else:
+		_display_shaders_page()
+		_loading_label.visible = false
 	_check_no_results()
 
 
@@ -3218,6 +5098,62 @@ func _display_shaders_page() -> void:
 		_create_asset_card(info)
 
 	_update_pagination()
+
+
+func _try_display_all_sources() -> void:
+	## Called when a source finishes in "All Sources" mode
+	## Displays results once all sources have responded
+	if _all_sources_pending > 0:
+		return  # Still waiting for other sources
+
+	SettingsDialog.debug_print("All Sources: collected %d total assets from all sources" % _all_sources_buffer.size())
+
+	# Sort by date (most recent first)
+	_all_sources_sorted.clear()
+	_all_sources_sorted.append_array(_all_sources_buffer)
+	_all_sources_sorted.sort_custom(_compare_by_date)
+
+	# Calculate pagination
+	_total_pages = max(1, ceili(float(_all_sources_sorted.size()) / ITEMS_PER_PAGE))
+
+	# Display current page
+	_display_all_sources_page()
+
+	_loading_label.visible = false
+	_update_pagination()
+
+
+func _compare_by_date(a: Dictionary, b: Dictionary) -> bool:
+	## Compare two assets by date (most recent first)
+	var date_a = a.get("modify_date", "")
+	var date_b = b.get("modify_date", "")
+
+	# If both have dates, compare them (ISO format sorts correctly as strings)
+	if not date_a.is_empty() and not date_b.is_empty():
+		return date_a > date_b
+
+	# Assets with dates come before those without
+	if not date_a.is_empty():
+		return true
+	if not date_b.is_empty():
+		return false
+
+	# No dates - sort by title as fallback
+	return a.get("title", "").to_lower() < b.get("title", "").to_lower()
+
+
+func _display_all_sources_page() -> void:
+	## Display a page of "All Sources" results
+	if _current_tab != Tab.STORE:
+		return
+
+	var start_idx = _current_page * ITEMS_PER_PAGE
+	var end_idx = min(start_idx + ITEMS_PER_PAGE, _all_sources_sorted.size())
+
+	for i in range(start_idx, end_idx):
+		var info = _all_sources_sorted[i]
+		_assets.append(info)
+		_create_asset_card(info)
 
 
 func _calculate_card_width() -> float:
@@ -3258,6 +5194,13 @@ func _create_asset_card(info: Dictionary) -> void:
 	_assets_grid.add_child(card)
 	_cards.append(card)
 
+	# Initialize likes (Store view shows "0" when no likes)
+	var asset_id = info.get("asset_id", "")
+	card.set_always_show_count(true)  # Store shows "0"
+	if not asset_id.is_empty():
+		card.set_like_count(get_like_count(asset_id))
+		card.set_liked(is_fav)
+
 	# Load icon (with fallback to default)
 	var icon_url = info.get("icon_url", "")
 	if not icon_url.is_empty():
@@ -3297,9 +5240,15 @@ func _create_assetplus_card() -> void:
 		if not _search_query.to_lower() in info.get("title", "").to_lower():
 			return
 
-	# Check category filter
+	# Check category filter (supports comma-separated categories)
 	if _filter_selected_category != "All":
-		if info.get("category", "") != _filter_selected_category:
+		var cat_str = info.get("category", "")
+		var category_match = false
+		for cat in _split_categories(cat_str):
+			if cat == _filter_selected_category:
+				category_match = true
+				break
+		if not category_match:
 			return
 
 	# Check source filter - "This Plugin" should match only when All or specific
@@ -3365,8 +5314,13 @@ func _create_installed_card(info: Dictionary) -> void:
 		_assets_grid.add_child(card)
 		_cards.append(card)
 
-		# Check for update available
+		# Initialize likes
 		var asset_id = info.get("asset_id", "")
+		if not asset_id.is_empty():
+			card.set_like_count(get_like_count(asset_id))
+			card.set_liked(is_fav)
+
+		# Check for update available
 		var installed_version = info.get("version", "")
 		if _has_update_available(asset_id, installed_version):
 			var update_info = _get_update_info(asset_id)
@@ -3411,10 +5365,15 @@ func _create_installed_card(info: Dictionary) -> void:
 	card.clicked.connect(func(_card_info): _on_asset_clicked(info))
 	card.favorite_clicked.connect(_on_favorite_clicked)
 	_assets_grid.add_child(card)
+
+	# Initialize likes
+	var asset_id = info.get("asset_id", "")
+	if not asset_id.is_empty():
+		card.set_like_count(get_like_count(asset_id))
+		card.set_liked(is_fav)
 	_cards.append(card)
 
 	# Check for update available
-	var asset_id = info.get("asset_id", "")
 	var installed_version = info.get("version", "")
 	if _has_update_available(asset_id, installed_version):
 		var update_info = _get_update_info(asset_id)
@@ -3478,11 +5437,11 @@ func _create_installed_card(info: Dictionary) -> void:
 	expand_btn.mouse_filter = Control.MOUSE_FILTER_STOP
 	card.add_child(expand_btn)
 
-	# Position at bottom right using anchors (moved up a bit)
+	# Position at bottom right using anchors (left of the ON/OFF toggle)
 	expand_btn.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-	expand_btn.offset_left = -44
+	expand_btn.offset_left = -90
 	expand_btn.offset_top = -28
-	expand_btn.offset_right = -8
+	expand_btn.offset_right = -54
 	expand_btn.offset_bottom = -10
 
 	# Create overlay panel (top level so it floats above everything)
@@ -3641,13 +5600,39 @@ func _uninstall_single_folder(asset_id: String, folder_path: String, title: Stri
 	var path_to_delete = folder_path
 
 	confirm.confirmed.connect(func():
+		# Check if this folder contains GDExtension (native libs loaded in memory)
+		var has_gdext = _has_gdextension_files(path_to_delete)
+
 		# IMPORTANT: Disable plugin BEFORE deleting files to prevent crash
 		_disable_plugins_before_uninstall([path_to_delete])
 
 		# Remove autoloads that reference scripts in the folder being deleted
 		_remove_autoloads_in_paths([path_to_delete])
 
-		if safe_mode:
+		if has_gdext:
+			# GDExtension: mark for deferred deletion (DLLs are loaded in memory)
+			SettingsDialog.debug_print(" GDExtension detected - marking for deferred deletion")
+			_mark_for_deferred_delete([path_to_delete], asset_id, title)
+			# Mark in registry as pending delete (so linkup ignores it)
+			_mark_addon_pending_delete(asset_id)
+			# Show info dialog with restart option
+			var info_dialog = ConfirmationDialog.new()
+			info_dialog.title = "Restart Required"
+			info_dialog.dialog_text = "This folder contains native libraries (GDExtension) that are loaded in memory.\n\nThe files will be deleted when you restart Godot."
+			info_dialog.ok_button_text = "Restart Now"
+			info_dialog.cancel_button_text = "Later"
+			info_dialog.confirmed.connect(func():
+				info_dialog.queue_free()
+				# Restart Godot
+				EditorInterface.restart_editor(true)
+			)
+			info_dialog.canceled.connect(func(): info_dialog.queue_free())
+			EditorInterface.get_base_control().add_child(info_dialog)
+			info_dialog.popup_centered()
+			# Don't modify registry yet - will be done after restart
+			_show_installed()
+			return
+		elif safe_mode:
 			_delete_tracked_files_only(uids_to_delete, [path_to_delete])
 		else:
 			_do_uninstall(path_to_delete)
@@ -3684,15 +5669,51 @@ func _update_card_installed_status(asset_id: String, is_installed: bool) -> void
 
 
 func _load_icon(card: Control, url: String) -> void:
+	## Queue icon loading to prevent UI freezes from too many simultaneous downloads
 	if _icon_cache.has(url):
 		card.set_icon(_icon_cache[url])
 		return
 
+	# Add to queue
+	_icon_queue.append({"card": card, "url": url})
+	_process_icon_queue()
+
+
+func _process_icon_queue() -> void:
+	## Process icon download queue with limited concurrency
+	while _icon_loading_count < ICON_MAX_CONCURRENT and not _icon_queue.is_empty():
+		var item = _icon_queue.pop_front()
+		var card = item.card
+		var url = item.url
+
+		# Skip if card no longer valid
+		if not is_instance_valid(card):
+			continue
+
+		# Check cache again (might have loaded while in queue)
+		if _icon_cache.has(url):
+			card.set_icon(_icon_cache[url])
+			continue
+
+		_icon_loading_count += 1
+		_download_icon(card, url)
+
+
+func _download_icon(card: Control, url: String) -> void:
+	## Actually download an icon (called from queue processor)
 	var http = HTTPRequest.new()
 	add_child(http)
 
+	# Use weakref to avoid lambda capture errors when card is freed
+	var card_ref = weakref(card)
+
 	http.request_completed.connect(func(result, code, headers, body):
 		http.queue_free()
+		_icon_loading_count -= 1
+
+		# Get card from weakref (returns null if freed)
+		var card_obj = card_ref.get_ref()
+
 		if result == HTTPRequest.RESULT_SUCCESS and code == 200 and body.size() > 8:
 			var img = Image.new()
 			var success = false
@@ -3726,26 +5747,29 @@ func _load_icon(card: Control, url: String) -> void:
 			if success:
 				var tex = ImageTexture.create_from_image(img)
 				_icon_cache[url] = tex
-				if is_instance_valid(card):
-					card.set_icon(tex)
+				if card_obj:
+					card_obj.set_icon(tex)
 			elif is_gif:
 				# Try GIF decoder for first frame
 				var gif_img = _decode_gif_first_frame(body)
 				if gif_img:
 					var tex = ImageTexture.create_from_image(gif_img)
 					_icon_cache[url] = tex
-					if is_instance_valid(card):
-						card.set_icon(tex)
-				elif is_instance_valid(card) and _default_icon:
-					card.set_icon(_default_icon)
+					if card_obj:
+						card_obj.set_icon(tex)
+				elif card_obj and _default_icon:
+					card_obj.set_icon(_default_icon)
 			else:
 				# Unknown/unsupported format - use default icon
-				if is_instance_valid(card) and _default_icon:
-					card.set_icon(_default_icon)
+				if card_obj and _default_icon:
+					card_obj.set_icon(_default_icon)
 		else:
 			# Download failed - use default icon
-			if is_instance_valid(card) and _default_icon:
-				card.set_icon(_default_icon)
+			if card_obj and _default_icon:
+				card_obj.set_icon(_default_icon)
+
+		# Process next items in queue
+		_process_icon_queue()
 	)
 	http.request(url)
 
@@ -4293,13 +6317,51 @@ func _on_uninstall_requested(info: Dictionary) -> void:
 	var addon_title = info.get("title", "addon")
 
 	confirm.confirmed.connect(func():
+		# Check if any path contains GDExtension (native libs loaded in memory)
+		var has_gdext = false
+		for p in paths_to_delete:
+			if _has_gdextension_files(p):
+				has_gdext = true
+				break
+
 		# IMPORTANT: Disable plugins BEFORE deleting files to prevent crash
 		_disable_plugins_before_uninstall(paths_to_delete)
 
 		# Remove autoloads that reference scripts in the folders being deleted
 		_remove_autoloads_in_paths(paths_to_delete)
 
-		if safe_mode:
+		if has_gdext:
+			# GDExtension: mark for deferred deletion (DLLs are loaded in memory)
+			SettingsDialog.debug_print(" GDExtension detected - marking for deferred deletion")
+			_mark_for_deferred_delete(paths_to_delete, asset_id, addon_title)
+			# Mark in registry as pending delete (so linkup ignores it)
+			_mark_addon_pending_delete(asset_id)
+			# Show info dialog with restart option
+			var info_dialog = ConfirmationDialog.new()
+			info_dialog.title = "Restart Required"
+			info_dialog.dialog_text = "This addon contains native libraries (GDExtension) that are loaded in memory.\n\nThe files will be deleted when you restart Godot."
+			info_dialog.ok_button_text = "Restart Now"
+			info_dialog.cancel_button_text = "Later"
+			info_dialog.confirmed.connect(func():
+				info_dialog.queue_free()
+				# Restart Godot
+				EditorInterface.restart_editor(true)
+			)
+			info_dialog.canceled.connect(func(): info_dialog.queue_free())
+			EditorInterface.get_base_control().add_child(info_dialog)
+			info_dialog.popup_centered()
+			# Don't unregister yet - will be done after restart when files are deleted
+			_clear_installed_paths_from_favorite(asset_id)
+			if _current_detail_dialog and is_instance_valid(_current_detail_dialog):
+				_current_detail_dialog.set_installed(false)
+			_update_card_installed_status(asset_id, false)
+			if _current_tab == Tab.INSTALLED:
+				_show_installed()
+			elif _current_tab == Tab.FAVORITES:
+				_show_favorites()
+			SettingsDialog.debug_print(" GDExtension uninstall scheduled for restart")
+			return  # Skip the normal unregister flow below
+		elif safe_mode:
 			# Safe uninstall: delete only tracked files, then clean up empty folders
 			SettingsDialog.debug_print(" Safe uninstalling '%s' (%d tracked files)..." % [addon_title, uids_to_delete.size()])
 			var deleted = _delete_tracked_files_only(uids_to_delete, paths_to_delete)
@@ -4324,7 +6386,8 @@ func _on_uninstall_requested(info: Dictionary) -> void:
 			_show_favorites()
 
 		# Safe scan: wait frames + timer before scanning (avoids crash during import)
-		_queue_safe_scan()
+		if not has_gdext:
+			_queue_safe_scan()
 		SettingsDialog.debug_print(" Uninstall complete")
 	)
 
@@ -4774,6 +6837,216 @@ func _is_folder_empty(folder_path: String) -> bool:
 	return is_empty
 
 
+# ===== GDEXTENSION DEFERRED DELETION =====
+# GDExtensions load DLLs/SOs into memory, so they can't be deleted while Godot runs.
+# We mark them for deletion on next Godot restart instead.
+
+func _has_gdextension_files(folder_path: String) -> bool:
+	## Check if a folder contains GDExtension native library files
+	var global_path = ProjectSettings.globalize_path(folder_path)
+	if not DirAccess.dir_exists_absolute(global_path):
+		return false
+	return _scan_for_native_libs(global_path)
+
+
+func _scan_for_native_libs(folder_path: String) -> bool:
+	## Recursively scan for native library files (.dll, .so, .dylib, .gdextension)
+	var dir = DirAccess.open(folder_path)
+	if not dir:
+		return false
+
+	dir.list_dir_begin()
+	var item = dir.get_next()
+	while item != "":
+		var full_path = folder_path.path_join(item)
+		if dir.current_is_dir() and not item.begins_with("."):
+			if _scan_for_native_libs(full_path):
+				dir.list_dir_end()
+				return true
+		else:
+			var ext = item.get_extension().to_lower()
+			if ext in ["dll", "so", "dylib", "gdextension"]:
+				dir.list_dir_end()
+				return true
+		item = dir.get_next()
+	dir.list_dir_end()
+	return false
+
+
+func _mark_addon_pending_delete(asset_id: String) -> void:
+	## Mark an addon as pending deletion in registry (so linkup ignores it)
+	if _installed_registry.has(asset_id):
+		var entry = _installed_registry[asset_id]
+		if entry is Dictionary:
+			entry["pending_delete"] = true
+			_save_installed_registry()
+			SettingsDialog.debug_print("Marked addon '%s' as pending delete in registry" % asset_id)
+
+
+func _mark_for_deferred_delete(paths: Array, asset_id: String, title: String) -> void:
+	## Mark paths for deletion on next Godot restart
+	var config = ConfigFile.new()
+	config.load(PENDING_DELETE_PATH)  # Load existing if any
+
+	var existing = config.get_value("pending", "deletions", [])
+	existing.append({
+		"paths": paths,
+		"asset_id": asset_id,
+		"title": title,
+		"timestamp": Time.get_unix_time_from_system()
+	})
+	config.set_value("pending", "deletions", existing)
+	config.save(PENDING_DELETE_PATH)
+	SettingsDialog.debug_print("Marked %d paths for deferred deletion: %s" % [paths.size(), title])
+
+	# Empty .gdextension files after a delay to avoid crash during uninstall
+	# This prevents Godot from loading DLLs on next restart
+	var paths_copy = paths.duplicate()
+	var self_ref = weakref(self)
+	get_tree().create_timer(0.5).timeout.connect(func():
+		var panel = self_ref.get_ref()
+		if not panel:
+			return
+		for path in paths_copy:
+			panel._disable_gdextension_files(path)
+	)
+
+
+func _disable_gdextension_files(folder_path: String) -> void:
+	## Empty all .gdextension files so Godot won't load native libs on restart
+	## We can't delete them (crash) but an empty file won't trigger DLL loading
+	var global_path = ProjectSettings.globalize_path(folder_path)
+	if not DirAccess.dir_exists_absolute(global_path):
+		return
+	_empty_gdextension_recursive(global_path)
+
+
+func _empty_gdextension_recursive(folder_path: String) -> void:
+	var dir = DirAccess.open(folder_path)
+	if not dir:
+		return
+
+	dir.list_dir_begin()
+	var item = dir.get_next()
+	while item != "":
+		var full_path = folder_path.path_join(item)
+		if dir.current_is_dir() and not item.begins_with("."):
+			_empty_gdextension_recursive(full_path)
+		elif item.get_extension().to_lower() == "gdextension":
+			# Empty the .gdextension file so Godot won't load DLLs on restart
+			var f = FileAccess.open(full_path, FileAccess.WRITE)
+			if f:
+				f.store_string("")
+				f.close()
+				SettingsDialog.debug_print("  Emptied %s" % item)
+			else:
+				SettingsDialog.debug_print("  Failed to empty %s" % item)
+		item = dir.get_next()
+	dir.list_dir_end()
+
+
+func _process_deferred_deletions() -> void:
+	## Process any pending deletions from previous session
+	if not FileAccess.file_exists(PENDING_DELETE_PATH):
+		return
+
+	var config = ConfigFile.new()
+	if config.load(PENDING_DELETE_PATH) != OK:
+		return
+
+	var deletions = config.get_value("pending", "deletions", [])
+	if deletions.is_empty():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(PENDING_DELETE_PATH))
+		return
+
+	SettingsDialog.debug_print("Processing %d deferred deletions..." % deletions.size())
+	var success_count = 0
+	var failed_deletions: Array = []
+
+	for deletion in deletions:
+		var paths = deletion.get("paths", [])
+		var title = deletion.get("title", "unknown")
+		var del_asset_id = deletion.get("asset_id", "")
+		var all_deleted = true
+
+		for path in paths:
+			var global_path = ProjectSettings.globalize_path(path)
+			if DirAccess.dir_exists_absolute(global_path):
+				_delete_directory(global_path)
+				if DirAccess.dir_exists_absolute(global_path):
+					all_deleted = false
+					SettingsDialog.debug_print("  Failed to delete: %s" % path)
+				else:
+					SettingsDialog.debug_print("  Deleted deferred: %s" % path)
+					# Also delete any .uid files that might be left over
+					_cleanup_uid_files_for_path(path)
+			elif FileAccess.file_exists(global_path):
+				var err = DirAccess.remove_absolute(global_path)
+				if err != OK:
+					all_deleted = false
+
+		if all_deleted:
+			success_count += 1
+			# Unregister the addon now that files are deleted
+			if not del_asset_id.is_empty():
+				_unregister_installed_addon(del_asset_id)
+				SettingsDialog.debug_print("Unregistered addon: %s" % del_asset_id)
+			SettingsDialog.debug_print("Deferred deletion complete: %s" % title)
+		else:
+			# Keep for next restart
+			failed_deletions.append(deletion)
+
+	# Update or remove the pending file
+	if failed_deletions.is_empty():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(PENDING_DELETE_PATH))
+		SettingsDialog.debug_print("All deferred deletions processed successfully")
+	else:
+		config.set_value("pending", "deletions", failed_deletions)
+		config.save(PENDING_DELETE_PATH)
+		SettingsDialog.debug_print("%d deletions still pending for next restart" % failed_deletions.size())
+
+	# Trigger filesystem scan to update editor
+	# Use call_deferred to ensure we're in a safe state
+	if success_count > 0:
+		call_deferred("_delayed_filesystem_scan")
+
+
+func _delayed_filesystem_scan() -> void:
+	## Mark that a filesystem scan is needed
+	## The actual scan will happen after script reloads settle down
+	var flag_path = "user://assetplus_needs_scan.flag"
+	var f = FileAccess.open(flag_path, FileAccess.WRITE)
+	if f:
+		f.store_string("1")
+		f.close()
+	SettingsDialog.debug_print("Marked filesystem scan needed (will run after reload)")
+
+
+func _check_deferred_scan_needed() -> void:
+	## Check if a filesystem scan was requested (after GDExtension deletion)
+	var flag_path = "user://assetplus_needs_scan.flag"
+	var global_flag = ProjectSettings.globalize_path(flag_path)
+	if FileAccess.file_exists(global_flag):
+		DirAccess.remove_absolute(global_flag)
+		SettingsDialog.debug_print("Deferred scan flag found, triggering filesystem scan...")
+		var fs = EditorInterface.get_resource_filesystem()
+		if fs:
+			fs.scan()
+
+
+func _cleanup_uid_files_for_path(res_path: String) -> void:
+	## Clean up any .uid files that might remain in .godot/uid_cache or elsewhere
+	## These can cause Godot to still reference deleted GDExtensions
+	var folder_name = res_path.trim_prefix("res://").trim_suffix("/")
+
+	# Try to clean .godot/uid_cache entries referencing this path
+	var uid_cache_path = ProjectSettings.globalize_path("res://.godot/uid_cache.bin")
+	# Note: uid_cache.bin is binary, we can't easily edit it
+	# But the filesystem scan should handle this
+
+	SettingsDialog.debug_print("  Cleaned up references for: %s" % folder_name)
+
+
 func _update_pagination() -> void:
 	_prev_btn.disabled = _current_page <= 0
 	_next_btn.disabled = _current_page >= _total_pages - 1
@@ -4842,10 +7115,14 @@ func _confirm_remove_favorite(info: Dictionary) -> void:
 
 
 func _update_card_favorite_state(info: Dictionary) -> void:
-	# Update card favorite icon
+	# Update card favorite icon with animation
+	var asset_id = info.get("asset_id", "")
+	var is_fav = _is_favorite(info)
 	for card in _cards:
-		if is_instance_valid(card) and card.get_info().get("asset_id", "") == info.get("asset_id", ""):
-			card.set_favorite(_is_favorite(info))
+		if is_instance_valid(card) and card.get_info().get("asset_id", "") == asset_id:
+			card.set_favorite(is_fav)
+			# Animate the like button when adding to favorites
+			card.set_liked(is_fav, true)  # true = animate
 			break
 
 
@@ -4859,7 +7136,7 @@ func _add_favorite(info: Dictionary) -> void:
 
 	# Ensure key fields are preserved for reimport
 	var essential_fields = [
-		"asset_id", "title", "author", "source", "category", "license",
+		"asset_id", "title", "author", "source", "category", "tags", "license",
 		"url", "browse_url", "download_url", "icon_url",
 		"description", "version", "godot_version",
 		# GitHub specific
@@ -4878,11 +7155,35 @@ func _add_favorite(info: Dictionary) -> void:
 	_favorites.append(favorite_data)
 	_save_favorites()
 
+	# Also send like to server (seamless integration)
+	var asset_id = info.get("asset_id", "")
+	if not asset_id.is_empty():
+		var source = info.get("source", "")
+		var categories: Array = []
+		# For AssetLib, always use category (tags format changed, old installs have wrong format)
+		# For Store Beta/Shaders, use tags from API
+		if source == SOURCE_GODOT:
+			var cat = info.get("category", "")
+			if not cat.is_empty():
+				categories = _category_to_tags(cat)
+		else:
+			categories = info.get("tags", []).duplicate()
+			if categories.is_empty():
+				var cat = info.get("category", "")
+				if not cat.is_empty():
+					categories = _category_to_tags(cat)
+		SettingsDialog.debug_print("Like - asset_id=%s, source=%s, tags=%s" % [asset_id, _source_to_slug(source), categories])
+		_like_asset(asset_id, _source_to_slug(source), categories)
+
 
 func _remove_favorite(info: Dictionary) -> void:
 	var asset_id = info.get("asset_id", "")
 	_favorites = _favorites.filter(func(f): return f.get("asset_id", "") != asset_id)
 	_save_favorites()
+
+	# Also send unlike to server (seamless integration)
+	if not asset_id.is_empty():
+		_unlike_asset(asset_id)
 
 	# If viewing favorites tab, refresh
 	if _current_tab == Tab.FAVORITES:
@@ -5728,7 +8029,7 @@ func _on_refresh_linkup_pressed() -> void:
 func _try_linkup_plugin(folder_name: String, plugin_name: String, plugin_author: String, addon_path: String) -> void:
 	SettingsDialog.debug_print_verbose("Linkup: Checking '%s' (folder: %s)" % [plugin_name, folder_name])
 
-	# Skip if this addon is already in registry with a known store source (not Local)
+	# Skip if this addon is already in registry with a known store source (not Local) or pending delete
 	for asset_id in _installed_registry:
 		var entry = _installed_registry[asset_id]
 		if entry is Dictionary:
@@ -5736,7 +8037,11 @@ func _try_linkup_plugin(folder_name: String, plugin_name: String, plugin_author:
 			if entry.has("path"):
 				paths = [entry["path"]]
 			for p in paths:
-				if p == addon_path or p.trim_suffix("/") == addon_path.trim_suffix("/"):
+				if _paths_match(p, addon_path):
+					# Skip if pending delete (GDExtension waiting for restart)
+					if entry.get("pending_delete", false):
+						SettingsDialog.debug_print_verbose("Linkup: '%s' is pending delete - skipping" % plugin_name)
+						return
 					var info = entry.get("info", {})
 					var source = info.get("source", "")
 					if not source.is_empty() and source != "Local":
@@ -5749,9 +8054,26 @@ func _try_linkup_plugin(folder_name: String, plugin_name: String, plugin_author:
 		if cached.get("matched", false):
 			SettingsDialog.debug_print_verbose("Linkup: '%s' already linked to %s" % [plugin_name, cached.get("asset_id", "?")])
 			# Already linked - register in registry if not already
+			# But ONLY if this path isn't already registered under a different asset_id
 			var asset_id = cached.get("asset_id", "")
 			if not asset_id.is_empty() and not _installed_registry.has(asset_id):
-				_register_installed_addon(asset_id, addon_path, cached.get("info", {}))
+				# Check if path is already registered under different asset_id
+				var path_already_registered = false
+				for existing_id in _installed_registry:
+					var existing_entry = _installed_registry[existing_id]
+					if existing_entry is Dictionary:
+						var existing_paths = existing_entry.get("paths", [])
+						if existing_entry.has("path"):
+							existing_paths = [existing_entry["path"]]
+						for p in existing_paths:
+							if _paths_match(p, addon_path):
+								path_already_registered = true
+								SettingsDialog.debug_print_verbose("Linkup: Path '%s' already registered under '%s' - not overwriting" % [addon_path, existing_id])
+								break
+					if path_already_registered:
+						break
+				if not path_already_registered:
+					_register_installed_addon(asset_id, addon_path, cached.get("info", {}))
 		else:
 			SettingsDialog.debug_print_verbose("Linkup: '%s' cached as no-match" % plugin_name)
 		return
@@ -5813,9 +8135,12 @@ func _linkup_search_assetlib(folder_name: String, search_terms: Array[String], p
 	var url = "%s/asset?godot_version=%s&max_results=10&filter=%s" % [GODOT_API, godot_ver, search_term.uri_encode()]
 	SettingsDialog.debug_print_verbose("Linkup: Searching AssetLib for '%s'..." % search_term)
 
+	var self_ref = weakref(self)
 	http.request_completed.connect(func(result, code, headers, body):
 		http.queue_free()
-		_on_linkup_assetlib_response(result, code, body, folder_name, search_terms, plugin_author, addon_path, term_index)
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._on_linkup_assetlib_response(result, code, body, folder_name, search_terms, plugin_author, addon_path, term_index)
 	)
 	http.request(url)
 
@@ -5840,12 +8165,14 @@ func _on_linkup_assetlib_response(result: int, code: int, body: PackedByteArray,
 				if _is_confident_match(search_term, title, plugin_author, author):
 					SettingsDialog.debug_print_verbose("Linkup: MATCH FOUND for '%s' -> '%s'" % [search_term, title])
 					var asset_id = str(asset.get("asset_id", ""))
+					var category_str = asset.get("category", "")
 					var info = {
 						"source": SOURCE_GODOT,
 						"asset_id": asset_id,
 						"title": title,
 						"author": author,
-						"category": asset.get("category", ""),
+						"category": category_str,
+						"tags": [_to_slug(category_str)] if not category_str.is_empty() else ["tools"],
 						"version": asset.get("version_string", ""),
 						"description": asset.get("description", ""),
 						"icon_url": asset.get("icon_url", ""),
@@ -5895,9 +8222,12 @@ func _linkup_search_beta(folder_name: String, search_terms: Array[String], plugi
 	var url = "https://store-beta.godotengine.org/search/?query=%s&sort=relevance" % search_term.uri_encode()
 	SettingsDialog.debug_print_verbose("Linkup: Searching Beta Store for '%s'..." % search_term)
 
+	var self_ref = weakref(self)
 	http.request_completed.connect(func(result, code, headers, body):
 		http.queue_free()
-		_on_linkup_beta_response(result, code, body, folder_name, search_terms, plugin_author, addon_path, term_index)
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._on_linkup_beta_response(result, code, body, folder_name, search_terms, plugin_author, addon_path, term_index)
 	)
 	http.request(url)
 
@@ -5996,6 +8326,16 @@ func _is_confident_match(local_name: String, store_name: String, local_author: S
 	return false
 
 
+func _normalize_path(path: String) -> String:
+	## Normalize a path for comparison (lowercase, forward slashes, no trailing slash)
+	return path.replace("\\", "/").to_lower().trim_suffix("/")
+
+
+func _paths_match(path1: String, path2: String) -> bool:
+	## Check if two paths refer to the same location
+	return _normalize_path(path1) == _normalize_path(path2)
+
+
 func _normalize_name(name: String) -> String:
 	# Lowercase, remove common separators, trim
 	return name.to_lower().replace("-", "").replace("_", "").replace(" ", "").strip_edges()
@@ -6033,6 +8373,51 @@ func _is_assetplus(info: Dictionary) -> bool:
 	return false
 
 
+func _to_slug(text: String) -> String:
+	## Convert display text to URL-safe slug (e.g., "3D Tools" -> "3d-tools")
+	return text.to_lower().replace(" ", "-").replace("_", "-")
+
+
+func _normalize_category_slug(slug: String) -> String:
+	## Normalize a single category slug
+	var normalized = slug.to_lower().strip_edges()
+	match normalized:
+		"tools", "tool":
+			return "tool"
+		"templates", "template":
+			return "template"
+		"shaders", "shader":
+			return "shaders"
+		"materials", "material":
+			return "materials"
+		"scripts", "script":
+			return "scripts"
+		"misc", "miscellaneous":
+			return "misc"
+		_:
+			return normalized
+
+
+func _category_to_tags(category: String) -> Array:
+	## Convert category display name to array of tags
+	## Each source uses its own category system, no need to match across sources
+	var slug = _to_slug(category)
+	return [slug] if not slug.is_empty() else []
+
+
+func _source_to_slug(source: String) -> String:
+	## Convert source display name to API slug
+	match source:
+		SOURCE_GODOT:
+			return "assetlib"
+		SOURCE_GODOT_BETA:
+			return "store-beta"
+		SOURCE_SHADERS:
+			return "shaders"
+		_:
+			return _to_slug(source)
+
+
 # ===== UPDATE CHECKING FOR INSTALLED ADDONS =====
 
 func _load_update_cache() -> void:
@@ -6053,6 +8438,444 @@ func _save_update_cache() -> void:
 	config.set_value("updates", "cache", _update_cache)
 	config.set_value("updates", "ignored", _ignored_updates)
 	config.save(UPDATE_CACHE_PATH)
+
+
+## ========== LIKES SYSTEM ==========
+
+
+func _init_likes_system() -> void:
+	## Initialize likes system: generate device hash, load caches, fetch likes
+	SettingsDialog.debug_print("Likes: init_likes_system() called")
+
+	_device_hash = _generate_device_hash()
+	SettingsDialog.debug_print("Likes: device_hash = %s" % _device_hash)
+
+	_load_likes_cache()
+	_load_user_likes()
+	SettingsDialog.debug_print("Likes: loaded %d cached likes, user has liked %d assets" % [_likes_cache.size(), _user_likes.size()])
+
+	# Create HTTP request for likes API
+	_likes_http = HTTPRequest.new()
+	add_child(_likes_http)
+	_likes_http.request_completed.connect(_on_likes_request_completed)
+	SettingsDialog.debug_print("Likes: HTTP request node created")
+
+	# Fetch likes from server after short delay (use call_deferred to ensure tree is ready)
+	call_deferred("_fetch_all_likes_deferred")
+
+	# Sync old favorites that don't have likes yet (after a delay to let likes load first)
+	var self_ref = weakref(self)
+	get_tree().create_timer(3.0).timeout.connect(func():
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._sync_favorites_likes()
+	)
+
+
+func _generate_device_hash() -> String:
+	## Generate a unique device hash for this installation
+	## Uses machine ID + project path for uniqueness across projects
+	var machine_id = OS.get_unique_id()
+	var project_path = ProjectSettings.globalize_path("res://")
+	var combined = machine_id + project_path
+	return combined.md5_text()
+
+
+func _load_likes_cache() -> void:
+	## Load cached like counts from disk
+	_likes_cache.clear()
+	var config = ConfigFile.new()
+	if config.load(LIKES_CACHE_PATH) == OK:
+		var cache_time = config.get_value("cache", "timestamp", 0)
+		var current_time = int(Time.get_unix_time_from_system())
+
+		# Only use cache if it's still valid
+		if current_time - cache_time < LIKES_CACHE_TTL:
+			var data = config.get_value("cache", "likes", {})
+			if data is Dictionary:
+				_likes_cache = data
+
+
+func _save_likes_cache() -> void:
+	## Save like counts to disk with timestamp
+	var config = ConfigFile.new()
+	config.set_value("cache", "likes", _likes_cache)
+	config.set_value("cache", "timestamp", int(Time.get_unix_time_from_system()))
+	config.save(LIKES_CACHE_PATH)
+
+
+func _sync_favorites_likes() -> void:
+	## Sync old favorites that aren't on the server yet
+	## This ensures favorites created before the likes system are synced
+	## Also handles migration from old versions where favorites didn't have likes
+	if _favorites.is_empty():
+		return
+
+	_syncing_likes = true  # Prevent cache overwrites during sync
+
+	var synced_count = 0
+	for fav in _favorites:
+		var asset_id = fav.get("asset_id", "")
+		if asset_id.is_empty():
+			continue
+
+		# Skip local items (GlobalFolder exports without real source)
+		var source = fav.get("source", "")
+		if source.is_empty() or source == SOURCE_GLOBAL_FOLDER or asset_id.begins_with("global_"):
+			continue
+
+		# Check if this favorite exists on the server (has likes in cache)
+		var server_likes = int(_likes_cache.get(asset_id, 0))
+
+		if server_likes == 0:
+			# This favorite has 0 likes on server - sync it
+			SettingsDialog.debug_print("Likes: syncing favorite '%s' (0 likes on server)" % fav.get("title", asset_id))
+			# Use tags directly
+			var categories: Array = fav.get("tags", []).duplicate()
+			if categories.is_empty():
+				var cat = fav.get("category", "")
+				if not cat.is_empty():
+					categories = _category_to_tags(cat)
+			_like_asset(asset_id, _source_to_slug(source), categories)
+			synced_count += 1
+
+			# Limit to 10 per sync to avoid flooding
+			if synced_count >= 10:
+				SettingsDialog.debug_print("Likes: synced %d favorites, will continue on next launch" % synced_count)
+				break
+
+	if synced_count > 0:
+		SettingsDialog.debug_print("Likes: synced %d old favorites" % synced_count)
+		# Reset sync flag after a delay to allow queue to process
+		var self_ref = weakref(self)
+		get_tree().create_timer(5.0).timeout.connect(func():
+			var panel = self_ref.get_ref()
+			if panel:
+				panel._syncing_likes = false
+		)
+	else:
+		SettingsDialog.debug_print("Likes: all favorites already synced")
+		_syncing_likes = false
+
+
+func _load_user_likes() -> void:
+	## Load user's liked assets from disk
+	_user_likes.clear()
+	var config = ConfigFile.new()
+	if config.load(USER_LIKES_PATH) == OK:
+		var data = config.get_value("user", "likes", {})
+		if data is Dictionary:
+			_user_likes = data
+
+
+func _save_user_likes() -> void:
+	## Save user's liked assets to disk
+	var config = ConfigFile.new()
+	config.set_value("user", "likes", _user_likes)
+	config.save(USER_LIKES_PATH)
+
+
+func _fetch_all_likes_deferred() -> void:
+	## Deferred call to fetch likes (ensures tree is ready)
+	if get_tree():
+		var self_ref = weakref(self)
+		get_tree().create_timer(1.0).timeout.connect(func():
+			var panel = self_ref.get_ref()
+			if panel:
+				panel._fetch_all_likes()
+		)
+	else:
+		SettingsDialog.debug_print("Likes: tree not available yet, calling directly")
+		_fetch_all_likes()
+
+
+func _fetch_all_likes() -> void:
+	## Fetch like counts for displayed assets using batch API (scalable)
+	## Respects cache TTL to avoid excessive API calls
+	if not _likes_http or not is_instance_valid(_likes_http):
+		SettingsDialog.debug_print("Likes: HTTP request node not valid")
+		return
+
+	# Check cache TTL - don't fetch if we fetched recently
+	var current_time = int(Time.get_unix_time_from_system())
+	if _likes_last_batch_fetch > 0 and current_time - _likes_last_batch_fetch < LIKES_CACHE_TTL:
+		SettingsDialog.debug_print("Likes: using cached data (TTL: %ds remaining)" % (LIKES_CACHE_TTL - (current_time - _likes_last_batch_fetch)))
+		# Still update UI from cache
+		_update_all_cards_likes()
+		return
+
+	# Collect asset IDs from currently displayed cards
+	var asset_ids: Array = []
+	for card in _cards:
+		if is_instance_valid(card):
+			var asset_id = card.get_asset_id()
+			if not asset_id.is_empty():
+				asset_ids.append(asset_id)
+
+	# Also include user's favorites (for sync purposes)
+	for asset_id in _user_likes:
+		if not asset_id in asset_ids:
+			asset_ids.append(asset_id)
+
+	if asset_ids.is_empty():
+		SettingsDialog.debug_print("Likes: no assets to fetch likes for")
+		return
+
+	# Check if HTTP request is busy (queue or previous batch)
+	if _likes_request_pending:
+		SettingsDialog.debug_print("Likes: HTTP busy, deferring batch fetch")
+		var self_ref = weakref(self)
+		get_tree().create_timer(1.0).timeout.connect(func():
+			var panel = self_ref.get_ref()
+			if panel:
+				panel._fetch_all_likes()
+		)
+		return
+
+	# Use batch API endpoint (max 100 IDs per request)
+	var ids_to_fetch = asset_ids.slice(0, 100)
+	var ids_param = ",".join(ids_to_fetch)
+	var url = LIKES_API + "/likes/batch?ids=" + ids_param.uri_encode()
+	SettingsDialog.debug_print("Likes: fetching batch for %d assets" % ids_to_fetch.size())
+	_likes_request_pending = true
+	var error = _likes_http.request(url)
+	if error != OK:
+		SettingsDialog.debug_print("Likes: Failed to fetch - error %s" % error)
+		_likes_request_pending = false
+	else:
+		SettingsDialog.debug_print("Likes: batch request sent successfully")
+
+
+func _update_all_cards_likes() -> void:
+	## Update all displayed cards with cached like data (no API call)
+	var updated_count = 0
+	for card in _cards:
+		if is_instance_valid(card):
+			var asset_id = card.get_asset_id()
+			if not asset_id.is_empty():
+				var like_count = int(_likes_cache.get(asset_id, 0))
+				var is_liked = _user_likes.get(asset_id, false)
+				card.set_like_count(like_count)
+				card.set_liked(is_liked)
+				updated_count += 1
+	SettingsDialog.debug_print("Likes: updated %d cards from cache" % updated_count)
+
+
+func _toggle_like(asset_id: String, source: String = "", categories: Array = []) -> void:
+	## Toggle like status for an asset (called when user clicks heart)
+	var is_liked = _user_likes.get(asset_id, false)
+
+	if is_liked:
+		# Unlike
+		_unlike_asset(asset_id)
+	else:
+		# Like
+		_like_asset(asset_id, source, categories)
+
+
+func _like_asset(asset_id: String, source: String = "", categories: Array = []) -> void:
+	## Queue a like to send to server and update local state
+	## categories is an array of tag slugs for filtering (e.g. ["2d", "tool"])
+	if not _likes_http or not is_instance_valid(_likes_http):
+		return
+
+	# Optimistically update UI
+	_user_likes[asset_id] = true
+	_save_user_likes()
+
+	# Update like count locally (increment)
+	var current_count = int(_likes_cache.get(asset_id, 0))
+	_likes_cache[asset_id] = current_count + 1
+	_save_likes_cache()
+
+	# Update UI
+	_update_like_display(asset_id)
+
+	# Queue the request with source and categories for indexing
+	_likes_queue.append({
+		"action": "like",
+		"asset_id": asset_id,
+		"source": source,
+		"categories": categories
+	})
+	_process_likes_queue()
+
+
+func _unlike_asset(asset_id: String) -> void:
+	## Queue an unlike to send to server and update local state
+	if not _likes_http or not is_instance_valid(_likes_http):
+		return
+
+	# Optimistically update UI
+	_user_likes.erase(asset_id)
+	_save_user_likes()
+
+	# Update like count locally (decrement)
+	var current_count = int(_likes_cache.get(asset_id, 0))
+	_likes_cache[asset_id] = max(0, current_count - 1)
+	_save_likes_cache()
+
+	# Update UI
+	_update_like_display(asset_id)
+
+	# Queue the request
+	_likes_queue.append({"action": "unlike", "asset_id": asset_id})
+	_process_likes_queue()
+
+
+func _process_likes_queue() -> void:
+	## Process the next item in the likes queue
+	if _likes_request_pending or _likes_queue.is_empty():
+		return
+
+	if not _likes_http or not is_instance_valid(_likes_http):
+		return
+
+	var item = _likes_queue.pop_front()
+	var action = item.get("action", "")
+	var asset_id = item.get("asset_id", "")
+
+	if action.is_empty() or asset_id.is_empty():
+		# Invalid item, try next
+		_process_likes_queue()
+		return
+
+	_likes_request_pending = true
+
+	var url = LIKES_API + "/" + action  # /like or /unlike
+	var headers = ["Content-Type: application/json"]
+
+	# Build request body
+	var request_data = {
+		"asset_id": asset_id,
+		"device_hash": _device_hash
+	}
+
+	# Add source and categories for likes (used for indexing/filtering)
+	if action == "like":
+		var source = item.get("source", "")
+		var categories: Array = item.get("categories", [])
+		if not source.is_empty():
+			request_data["source"] = source
+		if not categories.is_empty():
+			request_data["categories"] = categories
+
+	var body = JSON.stringify(request_data)
+
+	var error = _likes_http.request(url, headers, HTTPClient.METHOD_POST, body)
+	if error != OK:
+		SettingsDialog.debug_print("Failed to send %s: %s" % [action, error])
+		_likes_request_pending = false
+		# Try next item
+		_process_likes_queue()
+
+
+func _on_likes_request_completed(_result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	## Handle response from likes API
+	_likes_request_pending = false
+
+	SettingsDialog.debug_print("Likes: API response code %d" % response_code)
+	if response_code != 200:
+		SettingsDialog.debug_print("Likes: API returned error: %d" % response_code)
+		# Process next item in queue
+		_process_likes_queue()
+		return
+
+	var json = JSON.new()
+	var parse_result = json.parse(body.get_string_from_utf8())
+
+	if parse_result != OK:
+		SettingsDialog.debug_print("Likes: Failed to parse response")
+		_process_likes_queue()
+		return
+
+	var data = json.data
+	SettingsDialog.debug_print("Likes: received data: %s" % JSON.stringify(data))
+
+	# Handle responses from different API endpoints
+	# POST /like and /unlike return: {"asset_id": count} (single entry)
+	# GET /likes/batch returns: {"asset_id": count, ...} (multiple entries or empty)
+	if data is Dictionary:
+		# Check if this is a POST response (contains exactly 1 entry)
+		# POST /like and /unlike always return single entry with the affected asset_id
+		var is_post_response = data.size() == 1
+
+		if is_post_response:
+			# POST response - merge single entry into cache
+			for asset_id in data:
+				var new_count = int(data[asset_id])
+				_likes_cache[asset_id] = new_count
+				_update_like_display(asset_id)
+			_save_likes_cache()
+			SettingsDialog.debug_print("Likes: merged POST response into cache")
+		else:
+			# GET batch response - merge all entries into cache
+			# Don't overwrite cache during sync (would reset optimistic updates)
+			if _syncing_likes:
+				SettingsDialog.debug_print("Likes: skipping cache refresh during sync")
+			else:
+				# Update last batch fetch timestamp
+				_likes_last_batch_fetch = int(Time.get_unix_time_from_system())
+
+				# Merge batch results into existing cache (don't replace entire cache)
+				for asset_id in data:
+					_likes_cache[asset_id] = int(data[asset_id])
+				_save_likes_cache()
+				SettingsDialog.debug_print("Likes: merged %d like counts from batch" % data.size())
+
+				# Update all visible cards
+				var updated_count = 0
+				for card in _cards:
+					if is_instance_valid(card):
+						var asset_id = card.get_asset_id()
+						if not asset_id.is_empty():
+							_update_like_display(asset_id)
+							updated_count += 1
+				SettingsDialog.debug_print("Likes: updated %d cards" % updated_count)
+
+	# Process next item in queue
+	_process_likes_queue()
+
+
+func _update_like_display(asset_id: String) -> void:
+	## Update like count on all cards showing this asset
+	var like_count = int(_likes_cache.get(asset_id, 0))  # Convert to int (JSON returns floats)
+	var is_liked = _user_likes.get(asset_id, false)
+
+	# Update cards
+	var cards_to_remove: Array = []
+	for card in _cards:
+		if is_instance_valid(card) and card.get_asset_id() == asset_id:
+			# If in Favorites tab and unliked, remove card immediately
+			if _current_tab == Tab.FAVORITES and not is_liked:
+				cards_to_remove.append(card)
+			else:
+				card.set_like_count(like_count)
+				card.set_liked(is_liked)
+
+	# Remove unliked cards from Favorites (instant feedback)
+	for card in cards_to_remove:
+		_cards.erase(card)
+		card.queue_free()
+
+	# Update detail dialog if open
+	if _current_detail_dialog and is_instance_valid(_current_detail_dialog):
+		var dialog_asset_id = _current_detail_dialog.get_asset_id()
+		if dialog_asset_id == asset_id:
+			_current_detail_dialog.set_like_count(like_count)
+
+
+func get_like_count(asset_id: String) -> int:
+	## Get like count for an asset (used by cards)
+	return int(_likes_cache.get(asset_id, 0))  # Convert to int (JSON returns floats)
+
+
+func is_liked(asset_id: String) -> bool:
+	## Check if user has liked an asset (used by cards)
+	return _user_likes.get(asset_id, false)
+
+
+## ========== END LIKES SYSTEM ==========
 
 
 func _is_update_ignored(asset_id: String, version: String) -> bool:
@@ -6159,6 +8982,17 @@ func _recover_pending_installation() -> bool:
 	# Delete the pending file
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(pending_path))
 	SettingsDialog.debug_print("Pending installation recovered successfully!")
+
+	# Update the detail dialog if it's open for this asset
+	if _current_detail_dialog and is_instance_valid(_current_detail_dialog):
+		var dialog_asset_id = _current_detail_dialog.get_asset_id()
+		if dialog_asset_id == asset_id:
+			_current_detail_dialog.set_installed(true, valid_paths)
+			SettingsDialog.debug_print("Updated open detail dialog for recovered installation")
+
+	# Update card installed status
+	_update_card_installed_status(asset_id, true)
+
 	return true
 
 
@@ -6208,9 +9042,12 @@ func _check_assetlib_update(asset_id: String, info: Dictionary) -> void:
 	var url = "https://godotengine.org/asset-library/api/asset/%s" % asset_id
 	SettingsDialog.debug_print_verbose("Update check: Fetching AssetLib details for %s" % asset_id)
 
+	var self_ref = weakref(self)
 	http.request_completed.connect(func(result, code, headers, body):
 		http.queue_free()
-		_on_assetlib_update_response(result, code, body, asset_id, info)
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._on_assetlib_update_response(result, code, body, asset_id, info)
 	)
 	http.request(url)
 
@@ -6264,9 +9101,12 @@ func _check_beta_update(asset_id: String, info: Dictionary) -> void:
 
 	SettingsDialog.debug_print_verbose("Update check: Fetching Beta Store details for %s" % asset_id)
 
+	var self_ref = weakref(self)
 	http.request_completed.connect(func(result, code, headers, body):
 		http.queue_free()
-		_on_beta_update_response(result, code, body, asset_id, info)
+		var panel = self_ref.get_ref()
+		if panel:
+			panel._on_beta_update_response(result, code, body, asset_id, info)
 	)
 	http.request(browse_url)
 
@@ -6704,3 +9544,14 @@ func _perform_addon_update(info: Dictionary, target_version: String, download_ur
 
 	# Use the existing install flow (which will overwrite the current installation)
 	_on_install_requested(update_asset_info)
+
+
+func _save_last_source(source: String) -> void:
+	var settings = SettingsDialog.get_settings()
+	settings["last_source"] = source
+	SettingsDialog.save_settings(settings)
+
+
+func _load_last_source() -> String:
+	var settings = SettingsDialog.get_settings()
+	return settings.get("last_source", SOURCE_GODOT_BETA)
