@@ -12,28 +12,42 @@
 <p align="center">A unified asset browser for Godot 4.x that brings together multiple asset sources into one powerful interface.</p>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=ioUR2K8xtNE">
-    <img src="videoshort.gif" alt="AssetPlus Demo" width="600">
-  </a>
+  <img src="screens/newstoreallpage.png" alt="AssetPlus Home" width="700">
 </p>
-<p align="center"><a href="https://www.youtube.com/watch?v=ioUR2K8xtNE">▶️ Watch the full demo video on YouTube</a></p>
+<p align="center"><a href="https://www.youtube.com/watch?v=ioUR2K8xtNE">▶️ Watch the demo video on YouTube</a></p>
 
 ## Features
 
 | Feature | Description |
 |---------|-------------|
+| **Home Page** | Modern landing page with latest & most liked assets by category from all stores |
 | **Multi-Source Browser** | Search Godot AssetLib, Godot Store Beta & Godot Shaders in one place |
+| **Likes System** | Like assets and discover what's popular - synced to cloud across all users |
 | **One-Click Install** | Install addons, templates, or full demo projects with selective import |
+| **GDExtension Support** | Safe installation/uninstallation of addons with native libraries |
+| **Image Gallery** | Full-screen image viewer for asset screenshots |
 | **Installed Tracking** | See all addons in your project with source matching |
 | **Addon Updates** | Get notified when updates are available for your installed addons |
 | **Global Library** | Build a personal collection of reusable assets as `.godotpackage` files |
 | **Favorites Sync** | Save favorites, synced across all projects |
 | **Auto-Update** | AssetPlus updates itself automatically |
 
+### Home Page
+The new Home page displays curated content from all stores in a modern carousel layout:
+- Latest assets by category
+- Most liked assets (sort by "Most Liked")
+- Quick access to each store's categories
+
 ### Browse Multiple Sources
 - **Godot AssetLib** - Official Godot Asset Library
 - **Godot Store Beta** - New Godot store (store-beta.godotengine.org)
 - **Godot Shaders** - Community shaders from godotshaders.com (browse only, redirects to site)
+
+### Likes System
+Like your favorite assets and see what's popular in the community:
+- Likes are synced to a cloud server shared by all AssetPlus users
+- Sort by "Most Liked" to discover popular assets
+- Your liked assets are remembered across projects
 
 ### Global Asset Library
 Build your personal asset collection:
