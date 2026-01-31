@@ -821,7 +821,6 @@ func get_asset_id() -> String:
 func set_like_count(count: int) -> void:
 	## Update like count display
 	if not _like_button or not is_instance_valid(_like_button):
-		print("[AssetCard] WARNING: _like_button is null for %s" % _info.get("title", "?"))
 		return
 
 	_like_button.set_like_count(count)

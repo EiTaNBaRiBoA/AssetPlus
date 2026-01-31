@@ -247,7 +247,7 @@ func _calculate_modern_card_size() -> void:
 
 	_modern_card_size = Vector2(card_width, card_height)
 	var scroll_width = _assets_scroll.size.x if _assets_scroll else -1
-	print("[AssetPlus] _calculate_modern_card_size: window=%d, scroll.x=%d, panel_width=%d, available=%d, card_size=%s" % [int(window_width), int(scroll_width), int(panel_width), int(available_width), _modern_card_size])
+	SettingsDialog.debug_print_verbose("_calculate_modern_card_size: window=%d, scroll.x=%d, panel_width=%d, available=%d, card_size=%s" % [int(window_width), int(scroll_width), int(panel_width), int(available_width), _modern_card_size])
 
 
 func _ready() -> void:
@@ -2084,7 +2084,7 @@ func _search_assets() -> void:
 	# Show Home page if no search query, not "All Sources", and category is "All"
 	var selected_category = _category_filter.get_item_text(_category_filter.selected) if _category_filter.item_count > 0 else "All"
 	var show_home = _search_query.is_empty() and _current_source != SOURCE_ALL and selected_category == "All"
-	print("[AssetPlus] _search_assets: query='%s', source='%s', category='%s', show_home=%s" % [_search_query, _current_source, selected_category, show_home])
+	SettingsDialog.debug_print_verbose("_search_assets: query='%s', source='%s', category='%s', show_home=%s" % [_search_query, _current_source, selected_category, show_home])
 	if show_home:
 		_show_home()
 		return
