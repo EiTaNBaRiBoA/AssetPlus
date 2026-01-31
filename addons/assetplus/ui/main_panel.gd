@@ -37,6 +37,7 @@ const ITEMS_PER_PAGE = 24
 const GLOBAL_FAVORITES_FOLDER = "GodotAssetPlus"
 const GLOBAL_FAVORITES_FILE = "favorites.cfg"
 const GLOBAL_CONFIG_FILE = "config.cfg"
+const GLOBAL_ICON_CACHE_FOLDER = "icon_cache"
 
 # AssetPlus self-identification (to filter from stores and show specially in Installed)
 const ASSETPLUS_NAMES = ["assetplus", "asset plus", "asset-plus", "asset_plus"]
@@ -1017,11 +1018,17 @@ func _extract_icon_from_godotpackage(file_path: String) -> Texture2D:
 
 
 func _show_settings_panel() -> void:
-	const SettingsDialog = preload("res://addons/assetplus/ui/settings_dialog.gd")
 	var dialog = SettingsDialog.new()
-
+	dialog.clear_icon_cache_requested.connect(_on_clear_icon_cache_requested)
 	EditorInterface.get_base_control().add_child(dialog)
 	dialog.popup_centered()
+
+
+func _on_clear_icon_cache_requested() -> void:
+	var count = _cleanup_icon_disk_cache()
+	# Also clear memory cache
+	_icon_cache.clear()
+	SettingsDialog.debug_print("Cleared icon cache: %d files removed" % count)
 
 
 func _on_import_menu_selected(id: int) -> void:
@@ -5670,11 +5677,19 @@ func _update_card_installed_status(asset_id: String, is_installed: bool) -> void
 
 func _load_icon(card: Control, url: String) -> void:
 	## Queue icon loading to prevent UI freezes from too many simultaneous downloads
+	# Check memory cache first
 	if _icon_cache.has(url):
 		card.set_icon(_icon_cache[url])
 		return
 
-	# Add to queue
+	# Check disk cache (for favorites/installed icons)
+	var disk_tex = _load_icon_from_disk_cache(url)
+	if disk_tex:
+		_icon_cache[url] = disk_tex
+		card.set_icon(disk_tex)
+		return
+
+	# Add to queue for download
 	_icon_queue.append({"card": card, "url": url})
 	_process_icon_queue()
 
@@ -5690,9 +5705,16 @@ func _process_icon_queue() -> void:
 		if not is_instance_valid(card):
 			continue
 
-		# Check cache again (might have loaded while in queue)
+		# Check memory cache again (might have loaded while in queue)
 		if _icon_cache.has(url):
 			card.set_icon(_icon_cache[url])
+			continue
+
+		# Check disk cache again
+		var disk_tex = _load_icon_from_disk_cache(url)
+		if disk_tex:
+			_icon_cache[url] = disk_tex
+			card.set_icon(disk_tex)
 			continue
 
 		_icon_loading_count += 1
@@ -5747,6 +5769,8 @@ func _download_icon(card: Control, url: String) -> void:
 			if success:
 				var tex = ImageTexture.create_from_image(img)
 				_icon_cache[url] = tex
+				# Save to disk cache for future sessions
+				_save_icon_to_disk_cache(url, tex)
 				if card_obj:
 					card_obj.set_icon(tex)
 			elif is_gif:
@@ -5755,6 +5779,8 @@ func _download_icon(card: Control, url: String) -> void:
 				if gif_img:
 					var tex = ImageTexture.create_from_image(gif_img)
 					_icon_cache[url] = tex
+					# Save to disk cache for future sessions
+					_save_icon_to_disk_cache(url, tex)
 					if card_obj:
 						card_obj.set_icon(tex)
 				elif card_obj and _default_icon:
@@ -5772,6 +5798,132 @@ func _download_icon(card: Control, url: String) -> void:
 		_process_icon_queue()
 	)
 	http.request(url)
+
+
+# ===== DISK ICON CACHE =====
+
+func _get_icon_cache_dir() -> String:
+	## Returns path to the icon cache directory in AppData/Roaming
+	var config_dir = OS.get_config_dir()
+	var cache_dir = config_dir.path_join(GLOBAL_FAVORITES_FOLDER).path_join(GLOBAL_ICON_CACHE_FOLDER)
+	if not DirAccess.dir_exists_absolute(cache_dir):
+		DirAccess.make_dir_recursive_absolute(cache_dir)
+	return cache_dir
+
+
+func _get_icon_cache_filename(url: String) -> String:
+	## Generate a unique filename from URL using MD5 hash
+	return url.md5_text() + ".png"
+
+
+func _get_cached_icon_path(url: String) -> String:
+	## Get full path to cached icon file
+	return _get_icon_cache_dir().path_join(_get_icon_cache_filename(url))
+
+
+func _load_icon_from_disk_cache(url: String) -> Texture2D:
+	## Try to load icon from disk cache, returns null if not found
+	var cache_path = _get_cached_icon_path(url)
+	if not FileAccess.file_exists(cache_path):
+		return null
+
+	var img = Image.new()
+	if img.load(cache_path) == OK:
+		return ImageTexture.create_from_image(img)
+	return null
+
+
+func _save_icon_to_disk_cache(url: String, texture: Texture2D) -> void:
+	## Save icon to disk cache as PNG (only for favorites and installed addons)
+	if texture == null:
+		return
+
+	# Only cache icons for favorites or installed addons
+	if not _should_cache_icon_url(url):
+		return
+
+	var img = texture.get_image()
+	if img == null:
+		return
+
+	var cache_path = _get_cached_icon_path(url)
+	img.save_png(cache_path)
+
+
+func _should_cache_icon_url(url: String) -> bool:
+	## Check if this icon URL belongs to a favorite or installed addon
+	## Only these should be cached to disk to avoid bloating the cache
+
+	# Check favorites
+	for fav in _favorites:
+		if fav.get("icon_url", "") == url:
+			# Only cache if it comes from a store (not local/global folder)
+			var source = fav.get("source", "")
+			if source in [SOURCE_LOCAL, SOURCE_GLOBAL_FOLDER]:
+				return false
+			return true
+
+	# Check installed registry
+	for asset_id in _installed_registry:
+		var info = _installed_registry[asset_id]
+		if info.get("icon_url", "") == url:
+			# Only cache if it comes from a store
+			var source = info.get("source", "")
+			if source in [SOURCE_LOCAL, SOURCE_GLOBAL_FOLDER]:
+				return false
+			return true
+
+	return false
+
+
+func _clear_icon_from_disk_cache(asset_id: String) -> void:
+	## Clear cached icon for a specific asset (called when update is available)
+	## We need to find the icon URL from favorites or installed registry
+	var icon_url = ""
+
+	# Check favorites
+	for fav in _favorites:
+		if fav.get("asset_id", "") == asset_id:
+			icon_url = fav.get("icon_url", "")
+			break
+
+	# Check installed registry
+	if icon_url.is_empty() and _installed_registry.has(asset_id):
+		icon_url = _installed_registry[asset_id].get("icon_url", "")
+
+	if not icon_url.is_empty():
+		_clear_icon_from_disk_cache_by_url(icon_url)
+		SettingsDialog.debug_print("Cleared icon cache for %s" % asset_id)
+
+
+func _clear_icon_from_disk_cache_by_url(icon_url: String) -> void:
+	## Clear cached icon by URL directly
+	if icon_url.is_empty():
+		return
+	var cache_path = _get_cached_icon_path(icon_url)
+	if FileAccess.file_exists(cache_path):
+		DirAccess.remove_absolute(cache_path)
+
+
+func _cleanup_icon_disk_cache() -> int:
+	## Remove all cached icons from disk. Returns count of files removed.
+	var cache_dir = _get_icon_cache_dir()
+	var dir = DirAccess.open(cache_dir)
+	if not dir:
+		return 0
+
+	var count = 0
+	dir.list_dir_begin()
+	var file_name = dir.get_next()
+	while file_name != "":
+		if not dir.current_is_dir() and file_name.ends_with(".png"):
+			dir.remove(file_name)
+			count += 1
+		file_name = dir.get_next()
+	dir.list_dir_end()
+
+	SettingsDialog.debug_print("Cleaned %d cached icons from disk" % count)
+	return count
 
 
 ## Decode the first frame of a GIF image
@@ -7076,6 +7228,10 @@ func _update_pagination() -> void:
 
 func _is_favorite(info: Dictionary) -> bool:
 	var asset_id = info.get("asset_id", "")
+	return _is_favorite_by_id(asset_id)
+
+
+func _is_favorite_by_id(asset_id: String) -> bool:
 	for fav in _favorites:
 		if fav.get("asset_id", "") == asset_id:
 			return true
@@ -7130,11 +7286,10 @@ func _add_favorite(info: Dictionary) -> void:
 	if _is_favorite(info):
 		return
 
-	# Create a copy with essential fields for global favorites
+	# Create a copy with ONLY essential fields for global favorites
 	# This ensures we can reimport the asset in another project
-	var favorite_data = info.duplicate()
-
-	# Ensure key fields are preserved for reimport
+	# IMPORTANT: Do NOT use info.duplicate() - it copies objects like ImageTexture
+	# which bloats the favorites file massively (11MB+ instead of KB)
 	var essential_fields = [
 		"asset_id", "title", "author", "source", "category", "tags", "license",
 		"url", "browse_url", "download_url", "icon_url",
@@ -7145,9 +7300,15 @@ func _add_favorite(info: Dictionary) -> void:
 		"installed_paths", "installed_path"
 	]
 
+	var favorite_data: Dictionary = {}
 	for field in essential_fields:
-		if info.has(field) and not favorite_data.has(field):
-			favorite_data[field] = info[field]
+		if info.has(field):
+			var value = info[field]
+			# Deep copy arrays to avoid reference issues
+			if value is Array:
+				favorite_data[field] = value.duplicate()
+			else:
+				favorite_data[field] = value
 
 	# Add timestamp for when it was favorited
 	favorite_data["favorited_at"] = Time.get_datetime_string_from_system(true)
@@ -7178,8 +7339,13 @@ func _add_favorite(info: Dictionary) -> void:
 
 func _remove_favorite(info: Dictionary) -> void:
 	var asset_id = info.get("asset_id", "")
+	var icon_url = info.get("icon_url", "")
 	_favorites = _favorites.filter(func(f): return f.get("asset_id", "") != asset_id)
 	_save_favorites()
+
+	# Clear icon cache if not installed
+	if not icon_url.is_empty() and not _installed_registry.has(asset_id):
+		_clear_icon_from_disk_cache_by_url(icon_url)
 
 	# Also send unlike to server (seamless integration)
 	if not asset_id.is_empty():
@@ -7231,6 +7397,71 @@ func _load_favorites() -> void:
 			if item is Dictionary:
 				_favorites.append(item)
 		SettingsDialog.debug_print(" Loaded %d favorites from %s" % [_favorites.size(), favorites_path])
+
+		# Clean up any bloated favorites (embedded icons, etc.) from older versions
+		_cleanup_favorites_if_needed()
+
+
+func _cleanup_favorites_if_needed() -> void:
+	## Clean up favorites on load (silent, only saves if needed)
+	var cleaned = _do_cleanup_favorites()
+	if cleaned > 0:
+		SettingsDialog.debug_print(" Cleaned %d favorites (removed embedded data)" % cleaned)
+		_save_favorites()
+
+
+func _cleanup_favorites_force() -> int:
+	## Force cleanup and save (manual trigger from settings)
+	var cleaned = _do_cleanup_favorites()
+	if cleaned > 0:
+		_save_favorites()
+	return cleaned
+
+
+func _do_cleanup_favorites() -> int:
+	## Clean up favorites that contain bloated data (embedded icons, etc.)
+	## This fixes favorites.cfg files from older versions that stored full ImageTexture objects
+	## Returns the number of favorites that were cleaned
+
+	var essential_fields = [
+		"asset_id", "title", "author", "source", "category", "tags", "license",
+		"url", "browse_url", "download_url", "icon_url",
+		"description", "version", "godot_version",
+		# GitHub specific
+		"repo_owner", "repo_name", "default_branch",
+		# Local/installed specific
+		"installed_paths", "installed_path"
+	]
+
+	var cleaned_count = 0
+
+	for i in range(_favorites.size()):
+		var fav = _favorites[i]
+		if not fav is Dictionary:
+			continue
+
+		# Check if this favorite has non-essential keys (like _embedded_icon)
+		var has_bloat = false
+		for key in fav.keys():
+			if key not in essential_fields:
+				has_bloat = true
+				break
+
+		if has_bloat:
+			# Create a clean copy with only essential fields
+			var clean_fav: Dictionary = {}
+			for field in essential_fields:
+				if fav.has(field):
+					var value = fav[field]
+					if value is Array:
+						clean_fav[field] = value.duplicate()
+					else:
+						clean_fav[field] = value
+
+			_favorites[i] = clean_fav
+			cleaned_count += 1
+
+	return cleaned_count
 
 
 func _save_favorites() -> void:
@@ -7839,8 +8070,15 @@ func _get_file_uid_safe(file_path: String) -> String:
 
 func _unregister_installed_addon(asset_id: String) -> void:
 	if _installed_registry.has(asset_id):
+		# Get icon URL before erasing
+		var icon_url = _installed_registry[asset_id].get("icon_url", "")
+
 		_installed_registry.erase(asset_id)
 		_save_installed_registry()
+
+		# Clear icon cache if not in favorites
+		if not icon_url.is_empty() and not _is_favorite_by_id(asset_id):
+			_clear_icon_from_disk_cache_by_url(icon_url)
 
 
 func _get_installed_addon_path(asset_id: String) -> String:
@@ -8473,12 +8711,10 @@ func _init_likes_system() -> void:
 
 
 func _generate_device_hash() -> String:
-	## Generate a unique device hash for this installation
-	## Uses machine ID + project path for uniqueness across projects
+	## Generate a unique device hash for this machine
+	## Uses only machine ID so likes are shared across all projects on the same machine
 	var machine_id = OS.get_unique_id()
-	var project_path = ProjectSettings.globalize_path("res://")
-	var combined = machine_id + project_path
-	return combined.md5_text()
+	return machine_id.md5_text()
 
 
 func _load_likes_cache() -> void:
@@ -9084,6 +9320,8 @@ func _on_assetlib_update_response(result: int, code: int, body: PackedByteArray,
 	var installed_version = info.get("version", "").split(" | ")[0].strip_edges()  # Remove Godot version suffix
 	if not latest_version.is_empty() and latest_version != installed_version:
 		SettingsDialog.debug_print("Update available for %s: %s -> %s" % [info.get("title", asset_id), installed_version, latest_version])
+		# Clear icon cache in case the icon changed in the new version
+		_clear_icon_from_disk_cache(asset_id)
 		# Refresh the installed tab to show the update badge
 		if _current_tab == Tab.INSTALLED:
 			call_deferred("_refresh_installed_cards")
@@ -9183,6 +9421,8 @@ func _on_beta_update_response(result: int, code: int, body: PackedByteArray, ass
 	var installed_version = info.get("version", "").split(" | ")[0].strip_edges()
 	if not latest_version.is_empty() and latest_version != installed_version:
 		SettingsDialog.debug_print("Update available for %s: %s -> %s" % [info.get("title", asset_id), installed_version, latest_version])
+		# Clear icon cache in case the icon changed in the new version
+		_clear_icon_from_disk_cache(asset_id)
 		if _current_tab == Tab.INSTALLED:
 			call_deferred("_refresh_installed_cards")
 
